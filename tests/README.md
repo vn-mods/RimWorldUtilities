@@ -1,6 +1,12 @@
-# Focused Item Editor checks
+# Focused mod checks
 
-Run the dependency-free console test suite from the project root:
+The project uses local game references plus the installed Harmony 3 DLL. Copy
+`Mods/Harmony/1.7/Assemblies/0Harmony.dll` unchanged into `refs/0Harmony.dll` before
+building on a new checkout. `refs/` is ignored; the mod's Harmony reference is
+compile-only and is not bundled in the mod. The test executable copies it to its
+own build output.
+
+Run the package-free console test suite from the project root:
 
 ```sh
 dotnet run --project tests/RimWorldUtilities.Tests/RimWorldUtilities.Tests.csproj -c Release
@@ -26,6 +32,12 @@ callback counts, no art generation, same-quality no-ops, absolute HP preservatio
 clamping after downgrades, fresh Max calculations, and stale-target rejection.
 Only live selection lookup is replaced by a fixture resolver; no map is started.
 
+Crafting checks cover opt-in behavior, immediate enable/disable, unavailable
+patches, failed writes, faction/prisoner exclusions, slave and non-humanlike
+workers, matching active production bills, medical/autonomous exclusions,
+quality support and recipe output checks. IL tests verify exact-one matching,
+unchanged incompatible input, argument order, branch labels and exception blocks.
+
 To also exercise the actual Scribe serializer, atomic settings replacement, and
 loading those settings in a fresh test process, provide the installed game DLL
 directory:
@@ -50,6 +62,18 @@ fresh process. Fixture files never replace the player's mod settings.
 Additional native checks round-trip pending reset markers, cancel one and verify
 the old limit in a fresh process, then schedule it again and verify completion
 across two successive fresh processes. Other enabled types stay untouched.
+
+Crafting integration checks also inspect the real game IL and install the
+production Harmony patch in the isolated test process. A patched probe exercises
+the redirect and native `CompQuality` callback without starting a map. The probe
+stubs only the native-generation call inside our helper, before compiling the
+probe, to avoid initializing `ModsConfig` or accessing the player's profile.
+The global `QualityUtility` method is never patched. Counts and argument checks
+verify that the redirect calls generation exactly once and forwards the worker,
+skill and inspiration flag. Native RNG, inspiration consumption, art and letters
+still need in-game verification. Intentional incompatible-pattern checks exercise
+the unavailable state and warning path. Crafting settings are round-tripped with
+Scribe in fresh processes, including both services writing shared settings.
 
 The fresh process is the test executable, not RimWorld. Actual in-game save/load,
 map spawning, hauling, splitting, and merging still require manual verification.

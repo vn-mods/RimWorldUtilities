@@ -1,4 +1,5 @@
 using System.IO;
+using RimWorldUtilities.Patches;
 using RimWorldUtilities.Services;
 using Verse;
 
@@ -11,6 +12,7 @@ public sealed class RimWorldUtilitiesMod : Mod
 
     internal static RimWorldUtilitiesMod? Instance { get; private set; }
     internal CustomStackLimitService StackLimits { get; }
+    internal CraftingService Crafting { get; }
 
     public RimWorldUtilitiesMod(ModContentPack content)
         : base(content)
@@ -21,7 +23,9 @@ public sealed class RimWorldUtilitiesMod : Mod
         var filename = GenText.SanitizeFilename($"Mod_{Content.FolderName}_{GetType().Name}.xml");
         settingsStore = new CustomStackLimitSettingsStore(Path.Combine(GenFilePaths.ConfigFolderPath, filename));
         StackLimits = new CustomStackLimitService(settings, settingsStore.Save, RefreshMergeables);
+        Crafting = new CraftingService(settings, settingsStore.Save);
         Instance = this;
+        LegendaryCraftingPatch.Install(Crafting);
         Log.Message("[RimWorldUtilities] Mod loaded successfully!");
     }
 

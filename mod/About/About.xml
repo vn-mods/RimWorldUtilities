@@ -6,6 +6,15 @@
   <supportedVersions>
     <li>1.7</li>
   </supportedVersions>
+  <modDependencies>
+    <li>
+      <packageId>brrainz.harmony</packageId>
+      <displayName>Harmony</displayName>
+    </li>
+  </modDependencies>
+  <loadAfter>
+    <li>brrainz.harmony</li>
+  </loadAfter>
   <description>
     Utility tools for editing items, managing colonist needs,
     and controlling crafting quality.

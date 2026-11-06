@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/RimWorldUtilities.csproj" />
+    <Reference Include="0Harmony" HintPath="../../refs/0Harmony.dll" />
     <Reference Include="Assembly-CSharp" HintPath="../../refs/Assembly-CSharp.dll" />
     <Reference Include="RimWorld" HintPath="../../refs/RimWorld.dll" />
     <Reference Include="Waylith" HintPath="../../refs/Waylith.dll" />

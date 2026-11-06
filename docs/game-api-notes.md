@@ -642,7 +642,181 @@ Rot Progress editing is not implemented.
 
 ## Crafting
 
-To be investigated.
+### Always Legendary: production-only quality override
+
+`CraftingService` owns eligibility, the enabled setting, persistence errors and
+patch availability. `CraftingPanel` presents one native "Always Legendary"
+checkbox, off by default, with a short tooltip. A successful settings write takes
+effect immediately; a failed write retains the prior setting. An unavailable
+patch disables the control and shows a compact status with diagnostic tooltip.
+The existing `UtilitiesPanel` restores GUI/text state after drawing.
+
+The single existing `CustomStackLimitSettings : Verse.ModSettings` now also
+serializes `AlwaysLegendaryCrafting` under `alwaysLegendaryCrafting`, default
+false. Its copy/equality methods include the flag, so atomic persistence verifies
+it alongside stack limits and pending resets. Both services copy the current
+shared settings before saving, preserving each other's changes. Existing class,
+filename and stack XML tags remain unchanged; legacy Steel settings default the
+new feature off. A second `ModSettings` type is deliberately not introduced:
+`Verse.Mod.GetSettings<T>()` rejects a second settings class for the same Mod.
+Source: `refs/decompiled/Assembly-CSharp/Verse/Mod.cs`.
+
+### Native call and exact patch target
+
+`RimWorld.QualityUtility.GenerateQualityCreatedByPawn(Pawn pawn, SkillDef
+relevantSkill, bool consumeInspiration = true)` performs native RNG, uses a
+mechanoid's fixed skill or the pawn's skill, applies ideology quality effects,
+and consumes creativity inspiration when applicable. The integer overload has
+no worker context. The pawn overload is also called by
+`RimWorld.Frame.CompleteConstruction(Pawn worker)` and
+`RimWorld.JobDriver_BuildCubeSculpture.PlaceAndFinish()`, so it must not be patched
+globally for this feature.
+Sources: `refs/decompiled/Assembly-CSharp/RimWorld/QualityUtility.cs`,
+`refs/decompiled/Assembly-CSharp/RimWorld/Frame.cs`, and
+`refs/decompiled/Assembly-CSharp/RimWorld/JobDriver_BuildCubeSculpture.cs`.
+
+The Harmony transpiler targets only the private static method:
+
+```csharp
+Thing Verse.GenRecipe.PostProcessProduct(
+    Thing product, RecipeDef recipeDef, Pawn worker,
+    Precept_ThingStyle precept = null, ThingStyleDef style = null,
+    int? overrideGraphicIndex = null)
+```
+
+This method checks `product.TryGetComp<CompQuality>()` before generating quality.
+It then calls `CompQuality.SetQuality(q, ArtGenerationContext.Colony)`, sets up
+art attribution, records applicable tales, sends quality notifications, assigns
+styles, and wraps minifiable products. Rewriting only its generation call lets
+all those operations observe the final quality without repeating callbacks.
+The Item Editor's map-selection restrictions are not reused for newly created,
+unspawned recipe products; quality-capable furniture remains supported before
+native minification. No quality component is added to unsupported products.
+Sources: `refs/decompiled/Assembly-CSharp/Verse/GenRecipe.cs` and
+`refs/decompiled/Assembly-CSharp/RimWorld/CompQuality.cs`.
+
+`LegendaryCraftingPatch.GenerateQuality(...)` calls the original pawn overload
+exactly once with its original pawn, skill and inspiration flag, then asks the
+service whether to return Legendary instead. Disabled/unavailable/ineligible
+cases retain the generated result. Inspiration consumption and RNG are not
+skipped even when Legendary is enabled. Only newly produced eligible products
+are affected; existing items and unrelated quality generation are untouched.
+
+### Eligibility and worker identity
+
+`Verse.AI.Toils_Recipe.FinishRecipeAndStartStoringProduct(TargetIndex)` passes its
+current `actor` to `GenRecipe.MakeRecipeProducts(...)`. That worker finishes the
+current recipe; it is not inferred from the product, map, bill owner or an
+unfinished item's original creator. `GenRecipe.PostProcessProduct` is also used
+by `FinalizeGestatedPawns`, and DoBill also handles medical bills, so recipe
+arguments alone are not treated as proof of eligible crafting.
+Sources: `refs/decompiled/Assembly-CSharp/Verse/AI/Toils_Recipe.cs`,
+`refs/decompiled/Assembly-CSharp/Verse/GenRecipe.cs`, and
+`refs/decompiled/Assembly-CSharp/RimWorld/Bill_Medical.cs`.
+
+The implemented predicate requires:
+
+- A non-destroyed, non-Pawn product supporting `CompQuality` and a recipe with
+  `workSkill` and declared products or special products.
+- A non-destroyed, non-prisoner worker whose actual non-null faction equals
+  `Faction.OfPlayer`. The production resolver returns no player faction outside
+  a loaded game; tests inject only that resolver.
+- The worker's active `JobDriver_DoBill`, with the same worker, current Job and
+  exact RecipeDef reference as the product-processing arguments.
+- A `Bill_Production` that is not `Bill_Autonomous`, a live
+  `Building_WorkTable` target, and `RecipeDef.IsSurgery == false`.
+
+This includes quality-bearing products from ordinary production bills and
+special-product recipes; it excludes construction, medical operations,
+autonomous gestation, destruction/cremation jobs, and product generation outside
+the matching active bill context. Non-quality meals/resources receive no quality
+change. `RecipeDef.IsSurgery` considers whether any resolved recipe user is a
+Pawn, so a custom dual-purpose recipe is conservatively excluded.
+Sources: `refs/decompiled/Assembly-CSharp/Verse/RecipeDef.cs`,
+`refs/decompiled/Assembly-CSharp/Verse/AI/JobDriver_DoBill.cs`,
+`refs/decompiled/Assembly-CSharp/Verse/AI/Job.cs`, and
+`refs/decompiled/Assembly-CSharp/RimWorld/Bill_Autonomous.cs`.
+
+Player slaves are included because `Pawn_GuestTracker.SetGuestStatus(...,
+GuestStatus.Slave)` changes their actual faction to the host. Prisoners normally
+retain their original faction, but the explicit `IsPrisoner` exclusion also
+protects imprisoned player colonists. Foreign guests/NPCs and factionless pawns
+are excluded. Temporary quest workers are included if their actual faction is
+the player. Player-faction mechanoids are supported without requiring humanlike
+status, `IsColonist`, a skills tracker, or current overseer control.
+Sources: `refs/decompiled/Assembly-CSharp/RimWorld/Pawn_GuestTracker.cs`,
+`refs/decompiled/Assembly-CSharp/Verse/Pawn.cs`, and
+`refs/decompiled/Assembly-CSharp/RimWorld/QuestPart_JoinPlayer.cs`.
+
+### Harmony 3 integration and failure handling
+
+The installed Harmony package (`brrainz.harmony`) declares version 3.0.0.0; its
+`1.7/Assemblies/0Harmony.dll` is copied unchanged to the ignored local
+`refs/0Harmony.dll` for compilation. The production reference has `Private=false`,
+so no Harmony DLL is bundled. About.xml declares the dependency and load-after
+order. Tests copy the reference into their own build output only.
+
+`RimWorldUtilitiesMod` registers the patch once in its constructor, after loading
+settings and creating the service. This does not resolve ThingDefs or query a
+player faction during initialization. Owner ID:
+`slava.rimworldutilities.crafting.legendary`. The installed API supports
+`Harmony.Patch(MethodBase, HarmonyMethod prefix, HarmonyMethod postfix,
+HarmonyMethod transpiler, HarmonyMethod finalizer)`.
+
+The transpiler matches exactly one `call` to the precise pawn/skill/bool overload
+before rewriting any instructions. It adds the existing static method's product
+and recipe arguments and redirects to the five-argument helper. It uses neither
+fixed instruction indices nor compiler-generated names. All instructions are
+copied; branch labels move to the first added argument, exception begin markers
+also move there, and exception end markers remain after the redirect call.
+Harmony 3's `Emitter.MarkBlockBefore/MarkBlockAfter` behavior was verified against
+the installed DLL. Its `CodeInstruction(CodeInstruction)` constructor preserves
+metadata, whereas `Clone()` clears labels and exception blocks.
+
+A missing/ambiguous pattern returns the entire original instruction stream and
+marks the service unavailable. Installation errors also disable the feature.
+One warning per process explains the failure; there is no per-frame logging.
+The helper rechecks availability, so a later incompatible Harmony rebuild also
+blocks an already-emitted redirect. Other mods replacing/skipping production or
+changing quality after this point can bypass/override the feature; those cases
+require in-game compatibility testing.
+
+### Verification and remaining in-game checks
+
+Release build: zero warnings/errors. The full suite passes 391 assertions plus
+36 assertions across seven fresh test processes. The core suite also covers
+eligibility, opt-in behavior, failed writes, settings copying and IL metadata.
+Native integration checks read and rewrite the actual target IL, install Harmony
+3 in the test process, verify single registration, execute a patched probe, check
+original argument forwarding and single quality callbacks, and exercise
+unavailable states. Scribe/fresh-process checks cover crafting enable/disable,
+legacy Steel defaults, and preservation of settings written by both services.
+
+The probe substitutes only the native-generation call inside our helper in the
+test process; it never patches global `QualityUtility` and does not initialize or
+read the player's profile. Native RNG/inspiration behavior, art, letters and a
+complete real crafting job remain manual checks. No RimWorld process was launched
+for automated testing. The user separately reported that their deployed code
+works; individual scenarios below are not assumed verified by that report.
+
+Manual checks on a test save:
+
+1. Verify "Always Legendary" starts off with old/fresh settings. Enable it, fully
+   restart RimWorld and check it stays enabled. Disable it and repeat. Check
+   stack-limit settings, Item Editor controls and pending resets remain intact.
+2. With it enabled, craft a quality-bearing weapon, apparel item and sculpture.
+   Check Legendary quality, native art/notifications and a single completed bill
+   iteration with ordinary ingredient consumption. Non-quality products must
+   remain unchanged. Disable it and check normal generation resumes.
+3. Include an inspired crafter, a player slave and a crafting mechanoid where
+   available. Check inspiration is consumed normally. Foreign workers and
+   prisoners supplied by other mods must retain native quality generation.
+4. Check construction and cube sculptures retain native quality behavior. Test
+   other crafting/quality mods; generators outside the supported active bill
+   path are intentionally not covered. An incompatible call pattern should
+   produce one warning and an unavailable checkbox, with no partial rewrite.
+
+Crafting Speed Multiplier is not implemented.
 
 ## Colonist Needs
 

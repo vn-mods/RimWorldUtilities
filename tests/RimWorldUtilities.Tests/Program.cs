@@ -35,6 +35,11 @@ internal static class Program
             VerifyResetRestart(args[1]);
             return;
         }
+        if (args.Length == 2 && (args[0] == "--crafting-on" || args[0] == "--crafting-off"))
+        {
+            VerifyCraftingRestart(args[1], args[0] == "--crafting-on");
+            return;
+        }
 
         ValidateAmounts();
         ValidateEnabling();
@@ -45,12 +50,15 @@ internal static class Program
         ValidateResets();
         ValidateResetFailures();
         ItemPropertiesChecks.RunCore(Check);
+        CraftingChecks.RunCore(Check);
         if (!string.IsNullOrEmpty(gameDirectory))
         {
             ItemPropertiesChecks.RunNative(Check);
+            CraftingChecks.RunNative(Check);
             ValidatePersistence();
             ValidateSteelMigration();
             ValidateResetPersistence();
+            ValidateCraftingPersistence();
         }
         else
         {
@@ -458,6 +466,7 @@ internal static class Program
                 """);
             var originalFile = File.ReadAllBytes(path);
             var settings = CustomStackLimitSettingsStore.Read(path);
+            Check(!settings.AlwaysLegendaryCrafting, "Legacy Steel settings default crafting to disabled");
             var store = new CustomStackLimitSettingsStore(path);
             var steel = Definition("Steel", 75);
             var wood = Definition("WoodLog", 60);
@@ -514,6 +523,49 @@ internal static class Program
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    private static void ValidateCraftingPersistence()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "RimWorldUtilities-crafting-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(directory, "settings.xml");
+            var store = new CustomStackLimitSettingsStore(path);
+            var settings = EnabledSettings(250000);
+            var steel = Definition("Steel", 75);
+            var wood = Definition("WoodLog", 60);
+            store.Save(settings);
+            var stacks = new CustomStackLimitService(settings, store.Save, _ => { });
+            stacks.Initialize(new[] { steel, wood });
+            var crafting = new CraftingService(settings, store.Save);
+            crafting.SetAvailability(true);
+            Check(crafting.TrySetAlwaysLegendary(true), "Persist crafting enable using native Scribe");
+            Check(CustomStackLimitSettingsStore.Read(path).Matches(settings), "Verify crafting and stack settings together");
+            RunFreshProcess(path, "--crafting-on");
+            Check(stacks.TryEnable(wood, out _), "Write stack settings after enabling crafting");
+            Check(CustomStackLimitSettingsStore.Read(path).AlwaysLegendaryCrafting, "Stack writes preserve crafting enable");
+            Check(crafting.TrySetAlwaysLegendary(false), "Persist crafting disable using native Scribe");
+            Check(CustomStackLimitSettingsStore.Read(path).EnabledLimits["WoodLog"] == 100000,
+                "Crafting writes preserve later stack changes");
+            RunFreshProcess(path, "--crafting-off");
+            Check(Directory.GetFiles(directory).Length == 1, "Crafting persistence leaves no temporary settings");
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    private static void VerifyCraftingRestart(string path, bool enabled)
+    {
+        var settings = CustomStackLimitSettingsStore.Read(path);
+        var crafting = new CraftingService(settings, _ => throw new Exception("Reading settings must not save"));
+        Check(crafting.AlwaysLegendary == enabled, "Restore crafting setting in a fresh process");
+        Check(!crafting.IsAvailable, "Saved enable alone cannot bypass patch availability");
+        crafting.SetAvailability(true);
+        Check(crafting.AlwaysLegendary == enabled && crafting.IsAvailable, "Patch availability preserves saved preference");
+        Check(settings.EnabledLimits["Steel"] == 250000 && settings.OriginalLimits["Steel"] == 75,
+            "Crafting restart retains raised Steel configuration");
+        Console.WriteLine($"Fresh-process crafting settings passed ({checks} assertions).");
     }
 
     private static void RunFreshProcess(string path, string mode = "--restart")
