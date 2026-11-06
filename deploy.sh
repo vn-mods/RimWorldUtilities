@@ -35,5 +35,11 @@ while IFS= read -r -d '' def_file; do
         "$DEST/1.7/Defs/${def_file#"$ROOT/mod/1.7/Defs/"}"
 done < <(find "$ROOT/mod/1.7/Defs" -type f -name '*.xml' -print0)
 
+# Deploy custom textures
+if [[ -d "$ROOT/mod/Textures" ]]; then
+    mkdir -p "$DEST/Textures"
+    cp -a "$ROOT/mod/Textures/." "$DEST/Textures/"
+fi
+
 echo "==> Deployment complete!"
 echo "Installed to: $DEST"

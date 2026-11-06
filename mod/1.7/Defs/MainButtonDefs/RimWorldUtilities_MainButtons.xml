@@ -6,5 +6,7 @@
     <description>Open the RimWorld Utilities window.</description>
     <tabWindowClass>RimWorldUtilities.UI.MainTabWindow_Utilities</tabWindowClass>
     <order>1000</order>
+    <minimized>true</minimized>
+    <iconPath>RimWorldUtilities/Utilities</iconPath>
   </MainButtonDef>
 </Defs>
