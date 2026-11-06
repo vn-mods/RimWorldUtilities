@@ -38,6 +38,18 @@ workers, matching active production bills, medical/autonomous exclusions,
 quality support and recipe output checks. IL tests verify exact-one matching,
 unchanged incompatible input, argument order, branch labels and exception blocks.
 
+Construction quality checks use the same Always Legendary setting and shared
+worker eligibility. They cover player/NPC/prisoner/slave construction, building
+ownership, missing quality support, terrain, disabled settings, and the fact that
+Frame is already destroyed at its native quality-generation call. Separate
+availability checks verify that a construction mismatch preserves crafting and
+vice versa. The actual Frame method is patched in the isolated integration
+process; a receiver-shaped probe checks generator argument forwarding, one native
+quality callback, and buildings without quality support. The remaining native
+Frame calls are checked for unchanged order. Reinstallation and cube obsession
+are not patched. Complete map construction, real inspiration/RNG, art and letters
+still require in-game verification.
+
 To also exercise the actual Scribe serializer, atomic settings replacement, and
 loading those settings in a fresh test process, provide the installed game DLL
 directory:

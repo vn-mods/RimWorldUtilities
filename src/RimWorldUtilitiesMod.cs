@@ -28,6 +28,7 @@ public sealed class RimWorldUtilitiesMod : Mod
         ColonistNeeds = new ColonistNeedsService(settings, settingsStore.Save);
         Instance = this;
         LegendaryCraftingPatch.Install(Crafting);
+        LegendaryConstructionPatch.Install(Crafting);
         CraftingSpeedPatch.Install(Crafting);
         ColonistNeedsPatch.Install(ColonistNeeds);
         Log.Message("[RimWorldUtilities] Mod loaded successfully!");

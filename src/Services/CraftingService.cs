@@ -16,6 +16,15 @@ internal sealed class CraftingService
     public bool AlwaysLegendary => settings.AlwaysLegendaryCrafting;
     public bool IsAvailable { get; private set; }
     public string UnavailableReason { get; private set; } = "Crafting patch has not initialized.";
+    public bool IsConstructionAvailable { get; private set; }
+    public string ConstructionUnavailableReason { get; private set; } = "Construction quality patch has not initialized.";
+    public bool IsLegendaryAvailable => IsAvailable || IsConstructionAvailable;
+    public bool IsLegendaryFullyAvailable => IsAvailable && IsConstructionAvailable;
+    public string LegendaryUnavailableReason => string.Join("\n", new[]
+    {
+        IsAvailable ? string.Empty : UnavailableReason,
+        IsConstructionAvailable ? string.Empty : ConstructionUnavailableReason
+    }).Trim();
     public string PersistenceError { get; private set; } = string.Empty;
     public int SpeedMultiplier => IsValidSpeedMultiplier(settings.CraftingSpeedMultiplier)
         ? settings.CraftingSpeedMultiplier : 1;
@@ -42,11 +51,17 @@ internal sealed class CraftingService
         SpeedUnavailableReason = available ? string.Empty : reason;
     }
 
+    internal void SetConstructionAvailability(bool available, string reason = "")
+    {
+        IsConstructionAvailable = available;
+        ConstructionUnavailableReason = available ? string.Empty : reason;
+    }
+
     public static bool IsValidSpeedMultiplier(int value) => value is 1 or 2 or 3 or 5 or 10 or 20;
 
     public bool TrySetAlwaysLegendary(bool enabled)
     {
-        if (enabled && !IsAvailable)
+        if (enabled && !IsLegendaryAvailable)
         {
             return false;
         }
@@ -104,6 +119,21 @@ internal sealed class CraftingService
             ? QualityCategory.Legendary : generated;
     }
 
+    public QualityCategory ResolveConstructionQuality(QualityCategory generated, Thing frame, Pawn worker)
+    {
+        return IsConstructionAvailable && AlwaysLegendary && IsEligibleConstruction(frame, worker)
+            ? QualityCategory.Legendary : generated;
+    }
+
+    internal bool IsEligibleConstruction(Thing frame, Pawn worker)
+    {
+        // CompleteConstruction destroys the frame before generating quality. Its
+        // definition and faction still describe the new building at this call site.
+        return IsEligibleWorker(worker) && frame != null && frame.Faction == worker.Faction &&
+            frame.def?.entityDefToBuild is ThingDef { category: ThingCategory.Building } building &&
+            building.comps != null && building.HasComp(typeof(CompQuality));
+    }
+
     internal bool IsEligible(Thing product, RecipeDef recipe, Pawn worker)
     {
         if (product == null || product.Destroyed || product is Pawn ||
@@ -126,8 +156,7 @@ internal sealed class CraftingService
 
     private bool IsEligibleProduction(RecipeDef recipe, Pawn worker, JobDriver_DoBill? expectedDriver = null)
     {
-        if (worker == null || worker.Destroyed || worker.IsPrisoner || worker.Faction == null ||
-            worker.Faction != playerFaction())
+        if (!IsEligibleWorker(worker))
         {
             return false;
         }
@@ -147,4 +176,7 @@ internal sealed class CraftingService
         // Includes special-product recipes, while excluding destruction/cremation bills.
         return recipe.products?.Count > 0 || recipe.specialProducts?.Count > 0;
     }
+
+    private bool IsEligibleWorker(Pawn worker) => worker != null && !worker.Destroyed && !worker.IsPrisoner &&
+        worker.Faction != null && worker.Faction == playerFaction();
 }

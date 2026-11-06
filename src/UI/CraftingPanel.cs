@@ -11,14 +11,15 @@ internal sealed class CraftingPanel : UtilitiesPanel
     protected override void DrawContents(Rect rect)
     {
         var crafting = RimWorldUtilitiesMod.Instance?.Crafting;
-        var available = crafting?.IsAvailable == true;
+        var available = crafting?.IsLegendaryAvailable == true;
+        var fullyAvailable = crafting?.IsLegendaryFullyAvailable == true;
         var enabled = crafting?.AlwaysLegendary == true;
         var checkboxRect = new Rect(rect.x, rect.y, 240f, 28f);
         Text.Font = GameFont.Small;
         GUI.color = Color.white;
         Widgets.CheckboxLabeled(checkboxRect, "Always Legendary", ref enabled, disabled: !available);
         TooltipHandler.TipRegion(checkboxRect,
-            "Legendary quality for crafted items made by your faction.");
+            "Legendary quality for crafted items and constructed furniture.");
         if (available && crafting != null && enabled != crafting.AlwaysLegendary)
         {
             crafting.TrySetAlwaysLegendary(enabled);
@@ -56,11 +57,11 @@ internal sealed class CraftingPanel : UtilitiesPanel
             Widgets.Label(statusRect, "Could not save settings");
             TooltipHandler.TipRegion(statusRect, crafting.PersistenceError);
         }
-        else if (!available || !speedAvailable)
+        else if (!fullyAvailable || !speedAvailable)
         {
             Widgets.Label(statusRect, !available && !speedAvailable ? "Crafting unavailable" :
-                !available ? "Legendary unavailable" : "Speed unavailable");
-            var reason = !available ? crafting?.UnavailableReason ?? "Crafting has not initialized." : string.Empty;
+                !available ? "Legendary unavailable" : !fullyAvailable ? "Legendary partly unavailable" : "Speed unavailable");
+            var reason = !fullyAvailable ? crafting?.LegendaryUnavailableReason ?? "Crafting has not initialized." : string.Empty;
             if (!speedAvailable) reason += "\n" + (crafting?.SpeedUnavailableReason ?? "Crafting speed has not initialized.");
             TooltipHandler.TipRegion(statusRect, reason.Trim());
         }

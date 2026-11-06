@@ -642,13 +642,14 @@ Rot Progress editing is not implemented.
 
 ## Crafting
 
-### Always Legendary: production-only quality override
+### Always Legendary: crafted items and constructed furniture
 
 `CraftingService` owns eligibility, the enabled setting, persistence errors and
 patch availability. `CraftingPanel` presents one native "Always Legendary"
 checkbox, off by default, with a short tooltip. A successful settings write takes
 effect immediately; a failed write retains the prior setting. An unavailable
-patch disables the control and shows a compact status with diagnostic tooltip.
+quality path shows a compact status with diagnostic tooltip; the control remains
+available while either crafting or construction is supported.
 The existing `UtilitiesPanel` restores GUI/text state after drawing.
 
 The single existing `CustomStackLimitSettings : Verse.ModSettings` now also
@@ -675,7 +676,7 @@ Sources: `refs/decompiled/Assembly-CSharp/RimWorld/QualityUtility.cs`,
 `refs/decompiled/Assembly-CSharp/RimWorld/Frame.cs`, and
 `refs/decompiled/Assembly-CSharp/RimWorld/JobDriver_BuildCubeSculpture.cs`.
 
-The Harmony transpiler targets only the private static method:
+The recipe Harmony transpiler targets the private static method:
 
 ```csharp
 Thing Verse.GenRecipe.PostProcessProduct(
@@ -714,7 +715,7 @@ Sources: `refs/decompiled/Assembly-CSharp/Verse/AI/Toils_Recipe.cs`,
 `refs/decompiled/Assembly-CSharp/Verse/GenRecipe.cs`, and
 `refs/decompiled/Assembly-CSharp/RimWorld/Bill_Medical.cs`.
 
-The implemented predicate requires:
+The recipe predicate requires:
 
 - A non-destroyed, non-Pawn product supporting `CompQuality` and a recipe with
   `workSkill` and declared products or special products.
@@ -726,8 +727,8 @@ The implemented predicate requires:
 - A `Bill_Production` that is not `Bill_Autonomous`, a live
   `Building_WorkTable` target, and `RecipeDef.IsSurgery == false`.
 
-This includes quality-bearing products from ordinary production bills and
-special-product recipes; it excludes construction, medical operations,
+For recipes, this includes quality-bearing products from ordinary production
+bills and special-product recipes; it excludes construction, medical operations,
 autonomous gestation, destruction/cremation jobs, and product generation outside
 the matching active bill context. Non-quality meals/resources receive no quality
 change. `RecipeDef.IsSurgery` considers whether any resolved recipe user is a
@@ -747,6 +748,73 @@ status, `IsColonist`, a skills tracker, or current overseer control.
 Sources: `refs/decompiled/Assembly-CSharp/RimWorld/Pawn_GuestTracker.cs`,
 `refs/decompiled/Assembly-CSharp/Verse/Pawn.cs`, and
 `refs/decompiled/Assembly-CSharp/RimWorld/QuestPart_JoinPlayer.cs`.
+
+### Construction quality path (1.7.4998b)
+
+`public void RimWorld.Frame.CompleteConstruction(Pawn worker)` is the normal
+on-map construction completion path. `Blueprint_Build.MakeSolidThing(...)`
+creates a Frame; `JobDriver_ConstructFinishFrame.MakeNewToils()` calls its
+completion method with the current actor. The frame creates the actual building,
+copies its faction, and checks its live `CompQuality`. Only when that component
+exists does it call `QualityUtility.GenerateQualityCreatedByPawn(worker,
+SkillDefOf.Construction, consumeInspiration: true)`, then `CompQuality.SetQuality`
+with `ArtGenerationContext.Colony` and `QualityUtility.SendCraftNotification`.
+Art attribution, styles, source transfer, proportional HP, spawning, storage
+settings, records, tales, quest signals and lord notifications stay native.
+This is capability-based, covering beds, chairs and any other constructible
+building with quality support; tables/buildings without it remain unsupported.
+Sources: `refs/decompiled/Assembly-CSharp/RimWorld/Frame.cs:262`,
+`refs/decompiled/Assembly-CSharp/RimWorld/Blueprint_Build.cs:70`,
+`refs/decompiled/Assembly-CSharp/RimWorld/JobDriver_ConstructFinishFrame.cs:77`.
+
+Important ordering: `CompleteConstruction` destroys its Frame before quality
+generation. `LegendaryConstructionPatch` therefore passes the existing `this`
+receiver to its helper and reads its retained definition/faction; it must not
+reject that frame merely because it is destroyed. The helper generates vanilla
+quality exactly once with the original arguments, then uses the shared
+`CraftingService` setting and worker predicate. Construction additionally
+requires matching frame/worker faction and a building definition supporting
+`CompQuality`; terrain, items and non-quality buildings are excluded. It has no
+production-bill requirement, since this call site already supplies construction
+context. No quality components are created and no existing buildings are scanned.
+
+The exact new Harmony 3 target is the public instance method
+`RimWorld.Frame.CompleteConstruction(Verse.Pawn)`, returning `void`. Owner ID:
+`slava.rimworldutilities.construction.legendary`. Its transpiler requires exactly
+one unmodified call to the pawn/skill/bool generation overload, inserts `ldarg.0`,
+and redirects only that call. No generated local slots are assumed. Branch and
+exception metadata are preserved as in the recipe patch. Actual assembly IL is
+checked by the integration suite, including unchanged remaining native calls.
+
+`Blueprint_Install.MakeSolidThing(...)` returns the existing inner building;
+`TryReplaceWithSolidThing(...)` installs it without generating new quality.
+Reinstallation must retain existing quality. Ordinary sculptures made at an art
+bench already use `GenRecipe`; Anomaly
+`JobDriver_BuildCubeSculpture.PlaceAndFinish()` has a separate obsession/mental
+state path and intentionally remains unpatched. Searching the local pawn-quality
+generator call sites found no additional ordinary construction path requiring a
+patch. Sources: `refs/decompiled/Assembly-CSharp/RimWorld/Blueprint_Install.cs:98`,
+`refs/decompiled/Assembly-CSharp/RimWorld/JobDriver_BuildCubeSculpture.cs:100`,
+`refs/decompiled/Assembly-CSharp/Verse/GenRecipe.cs:79`.
+
+Both quality paths reuse `AlwaysLegendaryCrafting` and the existing persistence
+format. The checkbox remains "Always Legendary"; its tooltip is
+"Legendary quality for crafted items and constructed furniture." Recipe and
+construction availability are independent. A missing/ambiguous/already redirected
+construction pattern leaves its input IL unchanged, marks only construction
+unavailable and warns once. Existing emitted redirects recheck that availability.
+Recipe failure likewise leaves supported construction operational; only failure
+of both quality paths disables the checkbox. Crafting speed remains independent.
+
+Construction checks cover player/NPC/factionless/prisoner/slave workers,
+non-humanlike workers, building ownership, quality support, terrain, disabled
+settings, destroyed-frame timing and independence from recipe availability.
+Native checks install the real Frame patch once and execute a patched probe with
+the same stack/receiver shape, verifying one generator call, original argument
+forwarding, one native quality callback, and fail-closed behavior. Only the native
+generator call inside our test helper is stubbed; global `QualityUtility` is never
+patched. Full construction on a map, real RNG/inspiration consumption, art,
+letters, styles and other mods that skip/replace completion remain manual checks.
 
 ### Harmony 3 integration and failure handling
 
@@ -774,7 +842,8 @@ the installed DLL. Its `CodeInstruction(CodeInstruction)` constructor preserves
 metadata, whereas `Clone()` clears labels and exception blocks.
 
 A missing/ambiguous pattern returns the entire original instruction stream and
-marks the service unavailable. Installation errors also disable the feature.
+marks the corresponding quality path unavailable. Installation errors also
+disable only the affected path.
 One warning per process explains the failure; there is no per-frame logging.
 The helper rechecks availability, so a later incompatible Harmony rebuild also
 blocks an already-emitted redirect. Other mods replacing/skipping production or
@@ -783,8 +852,9 @@ require in-game compatibility testing.
 
 ### Verification and remaining in-game checks
 
-Release build: zero warnings/errors. The full suite passes 391 assertions plus
-36 assertions across seven fresh test processes. The core suite also covers
+Release build: zero warnings/errors. The full suite including furniture
+construction passes 807 assertions plus 70 assertions across ten fresh test
+processes. The core suite also covers
 eligibility, opt-in behavior, failed writes, settings copying and IL metadata.
 Native integration checks read and rewrite the actual target IL, install Harmony
 3 in the test process, verify single registration, execute a patched probe, check
@@ -811,10 +881,15 @@ Manual checks on a test save:
 3. Include an inspired crafter, a player slave and a crafting mechanoid where
    available. Check inspiration is consumed normally. Foreign workers and
    prisoners supplied by other mods must retain native quality generation.
-4. Check construction and cube sculptures retain native quality behavior. Test
-   other crafting/quality mods; generators outside the supported active bill
-   path are intentionally not covered. An incompatible call pattern should
-   produce one warning and an unavailable checkbox, with no partial rewrite.
+4. Construct a quality-bearing bed/chair and any quality-capable modded building:
+   enabled player construction should be Legendary; disabled/NPC/prisoner cases
+   must preserve native generation. Check creativity inspiration consumption,
+   art attribution and notifications. Non-quality tables/walls and terrain must
+   stay unchanged. Reinstall an existing non-Legendary item and verify its quality
+   is preserved; cube-obsession sculptures also retain native behavior.
+5. Test other crafting/construction/quality mods. An incompatible call pattern
+   should produce one warning, retain original IL, and disable only that path.
+   The shared checkbox should remain usable if the other quality path works.
 
 ### Crafting Speed Multiplier: production work only
 

@@ -57,12 +57,14 @@ internal static class Program
         ValidateResetFailures();
         ItemPropertiesChecks.RunCore(Check);
         CraftingChecks.RunCore(Check);
+        ConstructionQualityChecks.RunCore(Check);
         CraftingSpeedChecks.RunCore(Check);
         ColonistNeedsChecks.RunCore(Check);
         if (!string.IsNullOrEmpty(gameDirectory))
         {
             ItemPropertiesChecks.RunNative(Check);
             CraftingChecks.RunNative(Check);
+            ConstructionQualityChecks.RunNative(Check);
             CraftingSpeedChecks.RunNative(Check);
             ColonistNeedsChecks.RunNative(Check);
             ValidatePersistence();
