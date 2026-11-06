@@ -1,0 +1,14 @@
+# Game assemblies (local references)
+refs/
+
+# Build artifacts
+bin/
+obj/
+build/
+
+# IDE / OS
+*.user
+.DS_Store
+
+# Compiled mod DLL
+mod/1.7/Assemblies/*.dll

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ModMetaData>
+  <name>RimWorld Utilities</name>
+  <author>Slava</author>
+  <packageId>slava.rimworldutilities</packageId>
+  <supportedVersions>
+    <li>1.7</li>
+  </supportedVersions>
+  <description>
+    Utility tools for editing items, managing colonist needs,
+    and controlling crafting quality.
+  </description>
+</ModMetaData>
