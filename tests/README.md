@@ -75,6 +75,18 @@ still need in-game verification. Intentional incompatible-pattern checks exercis
 the unavailable state and warning path. Crafting settings are round-tripped with
 Scribe in fresh processes, including both services writing shared settings.
 
+Speed checks cover the exact 1/2/3/5/10/20 choices, 1× returning the original
+float unchanged, invalid settings, worker/bill eligibility, separate patch
+availability and preservation of Legendary. Pure IL tests cover callback
+resolution from the delegate-field assignment, exact-one decrement matching,
+receiver reloads without fixed local indices, labels/exception blocks, and
+unchanged rejected input. Native checks install the patch on the actual generated
+game callback and execute a progress probe at all six speeds. The probe verifies
+work/unfinished-work values, unchanged elapsed and XP tick counters, completion
+branching and NPC exclusion. It models those counters; a real pawn skill tracker
+and complete bill job still require in-game checks. Fresh-process settings checks
+exercise 20× with Legendary on, 3× with it off, and return to 1×.
+
 The fresh process is the test executable, not RimWorld. Actual in-game save/load,
 map spawning, hauling, splitting, and merging still require manual verification.
 Reset is explicitly destructive: map-spawned stacks can lose excess while held

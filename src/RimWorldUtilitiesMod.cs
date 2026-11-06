@@ -26,6 +26,7 @@ public sealed class RimWorldUtilitiesMod : Mod
         Crafting = new CraftingService(settings, settingsStore.Save);
         Instance = this;
         LegendaryCraftingPatch.Install(Crafting);
+        CraftingSpeedPatch.Install(Crafting);
         Log.Message("[RimWorldUtilities] Mod loaded successfully!");
     }
 

@@ -35,9 +35,10 @@ internal static class Program
             VerifyResetRestart(args[1]);
             return;
         }
-        if (args.Length == 2 && (args[0] == "--crafting-on" || args[0] == "--crafting-off"))
+        if (args.Length == 2 && (args[0] == "--crafting-on" || args[0] == "--crafting-off" || args[0] == "--crafting-normal"))
         {
-            VerifyCraftingRestart(args[1], args[0] == "--crafting-on");
+            VerifyCraftingRestart(args[1], args[0] == "--crafting-on",
+                args[0] == "--crafting-on" ? 20 : args[0] == "--crafting-off" ? 3 : 1);
             return;
         }
 
@@ -51,10 +52,12 @@ internal static class Program
         ValidateResetFailures();
         ItemPropertiesChecks.RunCore(Check);
         CraftingChecks.RunCore(Check);
+        CraftingSpeedChecks.RunCore(Check);
         if (!string.IsNullOrEmpty(gameDirectory))
         {
             ItemPropertiesChecks.RunNative(Check);
             CraftingChecks.RunNative(Check);
+            CraftingSpeedChecks.RunNative(Check);
             ValidatePersistence();
             ValidateSteelMigration();
             ValidateResetPersistence();
@@ -467,6 +470,7 @@ internal static class Program
             var originalFile = File.ReadAllBytes(path);
             var settings = CustomStackLimitSettingsStore.Read(path);
             Check(!settings.AlwaysLegendaryCrafting, "Legacy Steel settings default crafting to disabled");
+            Check(settings.CraftingSpeedMultiplier == 1, "Legacy settings default to normal crafting speed");
             var store = new CustomStackLimitSettingsStore(path);
             var steel = Definition("Steel", 75);
             var wood = Definition("WoodLog", 60);
@@ -541,28 +545,39 @@ internal static class Program
             stacks.Initialize(new[] { steel, wood });
             var crafting = new CraftingService(settings, store.Save);
             crafting.SetAvailability(true);
+            crafting.SetSpeedAvailability(true);
             Check(crafting.TrySetAlwaysLegendary(true), "Persist crafting enable using native Scribe");
+            Check(crafting.TrySetSpeedMultiplier(20), "Persist speed independently using native Scribe");
             Check(CustomStackLimitSettingsStore.Read(path).Matches(settings), "Verify crafting and stack settings together");
             RunFreshProcess(path, "--crafting-on");
             Check(stacks.TryEnable(wood, out _), "Write stack settings after enabling crafting");
             Check(CustomStackLimitSettingsStore.Read(path).AlwaysLegendaryCrafting, "Stack writes preserve crafting enable");
+            Check(CustomStackLimitSettingsStore.Read(path).CraftingSpeedMultiplier == 20, "Stack writes preserve speed");
             Check(crafting.TrySetAlwaysLegendary(false), "Persist crafting disable using native Scribe");
+            Check(crafting.SpeedMultiplier == 20, "Disabling Legendary preserves speed");
+            Check(crafting.TrySetSpeedMultiplier(3), "Persist speed while Legendary is disabled");
             Check(CustomStackLimitSettingsStore.Read(path).EnabledLimits["WoodLog"] == 100000,
                 "Crafting writes preserve later stack changes");
             RunFreshProcess(path, "--crafting-off");
+            Check(crafting.TrySetSpeedMultiplier(1), "Persist normal speed");
+            RunFreshProcess(path, "--crafting-normal");
             Check(Directory.GetFiles(directory).Length == 1, "Crafting persistence leaves no temporary settings");
         }
         finally { Directory.Delete(directory, recursive: true); }
     }
 
-    private static void VerifyCraftingRestart(string path, bool enabled)
+    private static void VerifyCraftingRestart(string path, bool enabled, int expectedSpeed)
     {
         var settings = CustomStackLimitSettingsStore.Read(path);
         var crafting = new CraftingService(settings, _ => throw new Exception("Reading settings must not save"));
         Check(crafting.AlwaysLegendary == enabled, "Restore crafting setting in a fresh process");
         Check(!crafting.IsAvailable, "Saved enable alone cannot bypass patch availability");
+        Check(crafting.SpeedMultiplier == expectedSpeed && !crafting.IsSpeedAvailable,
+            "Restore speed without bypassing its patch availability");
         crafting.SetAvailability(true);
+        crafting.SetSpeedAvailability(true);
         Check(crafting.AlwaysLegendary == enabled && crafting.IsAvailable, "Patch availability preserves saved preference");
+        Check(crafting.IsSpeedAvailable && crafting.SpeedMultiplier == expectedSpeed, "Speed preference survives a fresh process");
         Check(settings.EnabledLimits["Steel"] == 250000 && settings.OriginalLimits["Steel"] == 75,
             "Crafting restart retains raised Steel configuration");
         Console.WriteLine($"Fresh-process crafting settings passed ({checks} assertions).");

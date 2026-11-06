@@ -816,7 +816,136 @@ Manual checks on a test save:
    path are intentionally not covered. An incompatible call pattern should
    produce one warning and an unavailable checkbox, with no partial rewrite.
 
-Crafting Speed Multiplier is not implemented.
+### Crafting Speed Multiplier: production work only
+
+`CraftingService.SpeedMultiplier` supports exactly 1, 2, 3, 5, 10 and 20.
+`CustomStackLimitSettings.CraftingSpeedMultiplier` is serialized under
+`craftingSpeedMultiplier`, default 1, and included in copy/equality verification.
+Old settings without the tag retain normal speed. Invalid saved values are
+treated as 1 by the service; unsupported setter values are rejected. The native
+dropdown shows `1× (Normal)`, `2×`, `3×`, `5×`, `10×`, `20×`. A successful atomic
+write applies to future work intervals and survives process restarts.
+
+Existing `IsAvailable`/`UnavailableReason` still describe Legendary;
+`IsSpeedAvailable`/`SpeedUnavailableReason` describe only speed. A failure of
+either patch does not disable the other. Controls are disabled individually,
+with compact status/diagnostic tooltips. Both settings operations copy the latest
+shared settings, preserving each other and the stack-limit/reset records.
+
+#### Callback resolution and exact progress patch
+
+`Verse.AI.JobDriver_DoBill.MakeNewToils()` uses
+`Verse.AI.Toils_Recipe.DoRecipeWork()`, which assigns an `Action<int>` to
+`Verse.AI.Toil.tickIntervalAction`. `Verse.AI.JobDriver.DriverTickInterval(int
+delta)` invokes it with the real elapsed interval. This callback adds delta to
+`ticksSpentDoingRecipeWork`, awards applicable skill XP, computes native work
+speed and subtracts `num * (float)delta` from `JobDriver_DoBill.workLeft`. It then
+synchronizes `UnfinishedThing.workLeft`, gains comfort and checks completion.
+Sources: `refs/decompiled/Assembly-CSharp/Verse/AI/JobDriver_DoBill.cs`,
+`refs/decompiled/Assembly-CSharp/Verse/AI/Toils_Recipe.cs`,
+`refs/decompiled/Assembly-CSharp/Verse/AI/Toil.cs`, and
+`refs/decompiled/Assembly-CSharp/Verse/AI/JobDriver.cs`.
+
+`CraftingSpeedPatch` inspects the factory's original IL through Harmony 3
+`PatchProcessor.GetOriginalInstructions()`. It requires exactly one assignment
+to the precise interval field, preceded by `ldftn` and construction of
+`Action<int>`, and validates the referenced method as `void(int)`. This resolves
+the generated callback without its compiler-generated name or constructing a
+Toil. Registration in the mod constructor needs no initialized game definitions.
+Owner ID: `slava.rimworldutilities.crafting.speed`. No new DLL dependency is added.
+
+The verified callback IL pattern is:
+
+```text
+load driver; dup; ldfld JobDriver_DoBill.workLeft;
+load rate; load delta; conv.r4; mul; sub; stfld JobDriver_DoBill.workLeft
+```
+
+The matcher requires exactly one such pattern and exactly one subtract/store
+decrement of this field, and rejects an existing speed helper. Positions are
+relative to the matching operations, not absolute instruction indices. It copies
+the actual receiver-load opcode/operand without assuming a local slot or closure
+field name. Immediately before `sub`, it reloads that driver and calls
+`CraftingSpeedPatch.ScaleWork(float nativeWork, JobDriver_DoBill driver)` once.
+The original subtraction/store, delta, rate calculation, counters, XP,
+unfinished-item synchronization and completion branches stay intact. Branch
+labels and exception begin markers move to the inserted driver load; exception
+end markers remain after the original subtraction. Other metadata is copied.
+
+At 1×, when unavailable, or for an ineligible job, the helper returns the original
+float unchanged, without multiplication. Otherwise it multiplies native work
+once. Changing speeds mid-job affects future progress only: neither the initial
+work amount nor the remaining-work field is rescaled. Native saved work units
+therefore remain valid when resuming unfinished recipes.
+
+Missing/ambiguous callback or decrement patterns, or installation errors, disable
+only speed. Incompatible IL is returned entirely unchanged, with one warning per
+process. The helper checks availability on each call, including after a failed
+Harmony rebuild. There is no fallback to changing global work-speed stats.
+
+#### Eligibility and gameplay semantics
+
+`CraftingService.IsEligibleProduction(...)` now supplies the shared worker/bill
+predicate, preserving Legendary's previous checks. Speed additionally requires
+the supplied driver to still be the worker's current driver. Both require the
+player's actual faction, exclude prisoners, require a matching active production
+bill at a live worktable, exclude `Bill_Autonomous` and `RecipeDef.IsSurgery`, and
+require normal/special products. Player slaves and player-faction mechanoids
+remain eligible.
+
+Speed has no quality-component or work-skill requirement. It is not limited to
+the Crafting skill or work type: ordinary tailoring, art, cooking, butchering,
+smithing, smelting and stonecutting bills share the path. Medical/surgical bills,
+autonomous processing, destruction/cremation, research, construction, movement and
+unrelated labor are excluded. No global pawn stat or ThingDef is modified.
+Sources: `refs/decompiled/Assembly-CSharp/RimWorld/WorkGiver_DoBill.cs`,
+`refs/decompiled/Assembly-CSharp/RimWorld/Bill_Medical.cs`,
+`refs/decompiled/Assembly-CSharp/RimWorld/Bill_Autonomous.cs`, and
+`refs/decompiled/Assembly-CSharp/Verse/RecipeDef.cs`.
+
+XP retains its native rate per elapsed tick; faster completion normally means
+less XP per product. Ingredient collection/consumption, product counts,
+storage/hauling and finalization are unchanged. Total job duration need not scale
+by the selected factor because non-production stages still take time and
+completion is interval-based. Native debug fast-crafting (30×) and other mods'
+rate/stat factors compose with this multiplier. Autonomous
+`Bill_Autonomous.BillTick()` forming timers are not accelerated.
+
+Mods altering the decrement may fail the strict matcher. A mod replacing the
+factory's delegate or the work path entirely can bypass the resolved original
+callback; runtime delegate replacement is not followed automatically. These
+combinations require in-game compatibility testing.
+
+#### Speed verification and manual checks
+
+Release build: zero warnings/errors. The complete suite passes 543 assertions
+plus 46 across eight fresh test processes; the core-only suite passes 419.
+Tests cover each factor, invalid values, bit-preserving 1× results, faction/job
+exclusions, shared settings and independent availability. Native checks resolve
+and patch the actual game callback, verify single registration, and execute the
+transpiler on a small progress probe using real `JobDriver_DoBill.workLeft`.
+The probe checks unchanged elapsed/XP tick counters, unfinished-work values,
+completion and NPC behavior at every factor. It does not run a live skill tracker,
+map, ingredient pipeline or complete bill job. Fresh-process Scribe checks cover
+Legendary with 20×, Legendary off with 3×, return to 1×, legacy defaults and stack
+writes retaining both preferences. No RimWorld process is launched by tests.
+
+Manual checks after user deployment:
+
+1. Check every dropdown choice and persistence after fully restarting RimWorld.
+   Combine 1×/20× with Legendary independently on/off. Verify Item Editor and
+   persistent stack/reset settings remain intact.
+2. With debug fast crafting off, compare progress at 1×, 2× and 20× using the same
+   pawn/stats/recipe. Include crafting, tailoring, art, cooking, smithing and a
+   no-quality or no-work-skill recipe. Check XP per worked tick, ingredients per
+   iteration, product counts and ordinary hauling.
+3. Change factors mid-job and save/reload an unfinished project, including a full
+   process restart. Remaining work must resume without repeated scaling of its
+   stored value. Check a player slave/mechanoid where available; foreign workers
+   and prisoners must retain native speed.
+4. Check surgery, research, construction and autonomous forming remain unchanged.
+   Test other work/recipe mods. A matcher failure should yield one warning and an
+   unavailable speed control while Legendary remains usable.
 
 ## Colonist Needs
 

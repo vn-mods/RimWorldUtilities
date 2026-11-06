@@ -236,7 +236,7 @@ internal static class CraftingChecks
         return QualityCategory.Good;
     }
 
-    private sealed class Fixture
+    internal sealed class Fixture
     {
         public readonly CustomStackLimitSettings Settings = new();
         public readonly Pawn Worker = Empty<Pawn>();
@@ -289,17 +289,17 @@ internal static class CraftingChecks
         public QualityCategory Quality() => Service.ResolveQuality(QualityCategory.Good, Product, Recipe, Worker);
     }
 
-    private sealed class CraftItem : ThingWithComps
+    internal sealed class CraftItem : ThingWithComps
     {
         public int QualityCallbacks;
         public override void PostQualitySet() => QualityCallbacks++;
     }
 
-    private static T Empty<T>() where T : class => (T)RuntimeHelpers.GetUninitializedObject(typeof(T));
-    private static void SetFaction(Thing thing, Faction? faction) =>
+    internal static T Empty<T>() where T : class => (T)RuntimeHelpers.GetUninitializedObject(typeof(T));
+    internal static void SetFaction(Thing thing, Faction? faction) =>
         typeof(Thing).GetField("factionInt", PrivateInstance)!.SetValue(thing, faction);
-    private static void SetSurgery(RecipeDef recipe, bool value) =>
+    internal static void SetSurgery(RecipeDef recipe, bool value) =>
         typeof(RecipeDef).GetField("isSurgeryCached", PrivateInstance)!.SetValue(recipe, value);
-    private static void Destroy(Thing thing) =>
+    internal static void Destroy(Thing thing) =>
         typeof(Thing).GetField("mapIndexOrState", PrivateInstance)!.SetValue(thing, (sbyte)-2);
 }
