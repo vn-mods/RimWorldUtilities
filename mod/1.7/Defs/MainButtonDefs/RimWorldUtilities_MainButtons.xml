@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Defs>
+  <MainButtonDef>
+    <defName>RWU_Utilities</defName>
+    <label>Utilities</label>
+    <description>Open the RimWorld Utilities window.</description>
+    <tabWindowClass>RimWorldUtilities.UI.MainTabWindow_Utilities</tabWindowClass>
+    <order>1000</order>
+  </MainButtonDef>
+</Defs>

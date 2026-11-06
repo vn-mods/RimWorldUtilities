@@ -29,5 +29,11 @@ install -Dm644 \
     "$ROOT/mod/1.7/Assemblies/RimWorldUtilities.dll" \
     "$DEST/1.7/Assemblies/RimWorldUtilities.dll"
 
+while IFS= read -r -d '' def_file; do
+    install -Dm644 \
+        "$def_file" \
+        "$DEST/1.7/Defs/${def_file#"$ROOT/mod/1.7/Defs/"}"
+done < <(find "$ROOT/mod/1.7/Defs" -type f -name '*.xml' -print0)
+
 echo "==> Deployment complete!"
 echo "Installed to: $DEST"
