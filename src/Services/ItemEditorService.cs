@@ -20,7 +20,7 @@ internal static class ItemEditorService
         if (selector.NumSelected != 1)
         {
             error = selector.NumSelected == 0
-                ? "Select one stackable item on the map, then open Utilities."
+                ? "Select one item on the map, then open Utilities."
                 : "Select exactly one item. Multiple selections cannot be edited.";
             return null;
         }
@@ -28,12 +28,30 @@ internal static class ItemEditorService
         var item = selector.SingleSelectedThing;
         if (item == null)
         {
-            error = "This selection is not an item. Select one stackable item on the map.";
+            error = "This selection is not an item. Select one item on the map.";
             return null;
         }
 
         return IsEditableItem(item, out error) ? item : null;
     }
+
+    public static Thing? GetSelectedItem(Thing expectedItem, out string error)
+    {
+        var item = GetSelectedItem(out error);
+        if (item != null && !ReferenceEquals(item, expectedItem))
+        {
+            error = "The selected item changed. Review its values and try again.";
+            return null;
+        }
+
+        return item;
+    }
+
+    public static bool IsOrdinaryItem(Thing item) =>
+        !item.Destroyed && item is not (Pawn or Building or Corpse or MinifiedThing) &&
+        item.def != null && item.def.category == ThingCategory.Item && item.stackCount > 0;
+
+    public static bool CanEditStackCount(Thing item) => IsOrdinaryItem(item) && item.def.stackLimit > 1;
 
     public static bool TryParseStackCount(string text, int stackLimit, out int amount, out string error)
     {
@@ -63,15 +81,15 @@ internal static class ItemEditorService
     public static bool TrySetStackCount(Thing expectedItem, string text, out string message)
     {
         // Re-read the live selection so a stale UI cannot edit another object.
-        var item = GetSelectedItem(out message);
+        var item = GetSelectedItem(expectedItem, out message);
         if (item == null)
         {
             return false;
         }
 
-        if (!ReferenceEquals(item, expectedItem))
+        if (!CanEditStackCount(item))
         {
-            message = "The selected item changed. Review its amount and try again.";
+            message = "This item is not stackable.";
             return false;
         }
 
@@ -115,16 +133,9 @@ internal static class ItemEditorService
             return false;
         }
 
-        if (item is Pawn or Building or Corpse or MinifiedThing || item.def == null ||
-            item.def.category != ThingCategory.Item || item.def.stackLimit <= 1)
+        if (!IsOrdinaryItem(item))
         {
-            error = "Only ordinary stackable items can be edited. This selection is unsupported.";
-            return false;
-        }
-
-        if (item.stackCount < 1)
-        {
-            error = "This stack has no items and cannot be edited.";
+            error = "Only ordinary items can be edited. This selection is unsupported.";
             return false;
         }
 

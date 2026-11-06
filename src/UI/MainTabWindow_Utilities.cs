@@ -8,7 +8,7 @@ namespace RimWorldUtilities.UI;
 public sealed class MainTabWindow_Utilities : MainTabWindow
 {
     private const float PanelGap = 12f;
-    private const float ItemPanelHeight = 196f;
+    private const float ItemPanelHeight = 276f;
     private const float PlaceholderMinHeight = 112f;
 
     private Vector2 scrollPosition;
@@ -26,7 +26,7 @@ public sealed class MainTabWindow_Utilities : MainTabWindow
         doCloseX = true;
     }
 
-    public override Vector2 RequestedTabSize => new Vector2(660f, 540f);
+    public override Vector2 RequestedTabSize => new Vector2(660f, 620f);
 
     public override void DoWindowContents(Rect inRect)
     {

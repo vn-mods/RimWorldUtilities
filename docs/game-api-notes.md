@@ -44,8 +44,10 @@ are from local source/assembly inspection, not an in-game test.
   whether the object is still spawned on the current map. A held/despawned or
   destroyed item must not remain an editable target.
   Source: `refs/decompiled/Assembly-CSharp/Verse/Thing.cs`.
-- Editor policy: require one spawned `Verse.ThingCategory.Item`, a positive
-  current count, and `Verse.ThingDef.stackLimit > 1`. Reject pawns, buildings,
+- Ordinary selection requires one spawned `Verse.ThingCategory.Item` with a
+  positive current count. Stack editing separately requires
+  `Verse.ThingDef.stackLimit > 1`; HP/quality can support non-stackable equipment.
+  Reject pawns, buildings,
   corpses, and minified things explicitly. Corpses and wrapped/minified objects
   are outside the initial ordinary-item feature even if another mod changes
   their limits. Desired counts must be integers in `1..item.def.stackLimit`.
@@ -95,8 +97,13 @@ The compact Item Editor uses `Verse.TexButton.Info` with
 `Verse.Widgets.DrawTextureFitted(Rect, Texture, float, float)` and
 `Verse.TooltipHandler.TipRegion(Rect, TipSignal)`. This displays native information
 artwork with our warning tooltip, without opening an unrelated information card.
-`Verse.Widgets.ButtonText(..., drawBackground: false, ...)` supports the compact,
-one-way Steel enable action. Sources: `refs/decompiled/Assembly-CSharp/Verse/TexButton.cs`,
+`Verse.Widgets.CheckboxLabeled(Rect, string, ref bool, bool, ...)` supports the
+compact per-type "Large stacks" control. Checking enables the saved override;
+unchecking requests a native destructive confirmation. While reset is pending,
+it is unchecked with a "Restart required" badge, even though the displayed active
+limit stays high. Re-checking cancels the pending reset. State is read from the
+service on every draw, so cancelled dialogs and failed writes do not leave a false
+checkbox state. Sources: `refs/decompiled/Assembly-CSharp/Verse/TexButton.cs`,
 `refs/decompiled/Assembly-CSharp/Verse/Widgets.cs`, and
 `refs/decompiled/Assembly-CSharp/Verse/TooltipHandler.cs`.
 
@@ -114,11 +121,100 @@ shared GUIStyle objects are not modified. Success feedback uses
 `UnityEngine.Time.realtimeSinceStartup` to expire after three seconds even while
 paused (also used by the native widget/tooltip implementations). Validation and
 persistence errors remain available as text/tooltips. This is presentation only;
-stack validation, persistence, and mutation services are unchanged.
+custom stack-limit persistence is independent of the styling.
+
+### Hit Points and Quality
+
+`ItemEditorService.GetSelectedItem()` now accepts ordinary non-stackable items;
+`CanEditStackCount()` separately gates the original stack controls and mutation
+entry point. `GetSelectedItem(expectedItem, out error)` rechecks live selection,
+reference identity, destruction/spawn state, map, and ordinary-item eligibility.
+`ItemPropertiesService` uses that resolver for every HP/quality mutation, including
+callbacks from an already-open quality menu. Equipped/inventory items are still
+despawned targets and are not editable; drop equipment onto the map first.
+
+#### HP property and maximum
+
+- `Verse.Thing.HitPoints` is a public virtual integer property whose base setter
+  simply writes `hitPointsInt`; it does not validate or clamp the value.
+- `Verse.Thing.MaxHitPoints` rounds
+  `GetStatValue(StatDefOf.MaxHitPoints, applyPostProcess: true, cacheStaleAfterTicks: 10)`.
+  Use this actual stat result, not a definition's base stat or a hardcoded limit.
+- `Verse.ThingDef.useHitPoints` is the authoritative HP support flag. The editor
+  accepts only whole numbers in `1..MaxHitPoints`; maxima below one are invalid.
+  Apply and Max clear the target's MaxHitPoints cache before reading the maximum,
+  so the action does not trust a stale displayed/cached maximum while paused.
+  Max applies immediately; HP text edits require their own Apply.
+- HP changes refresh the spawned Thing's mesh through `Thing.DirtyMapMesh(Map)`;
+  no damage event, destruction, or zero-HP intermediate state is used.
+
+Sources: `refs/decompiled/Assembly-CSharp/Verse/Thing.cs`,
+`refs/decompiled/Assembly-CSharp/Verse/ThingDef.cs`, and
+`refs/decompiled/Assembly-CSharp/RimWorld/StatExtension.cs`.
+
+#### Quality setter, callbacks, and HP consistency
+
+- `Verse.ThingCompUtility.TryGetComp<RimWorld.CompQuality>(Thing)` supports
+  quality-bearing `ThingWithComps`. Missing quality comps are not editable.
+  Source: `refs/decompiled/Assembly-CSharp/Verse/ThingCompUtility.cs`.
+- `RimWorld.CompQuality.SetQuality(QualityCategory, ArtGenerationContext?)` writes
+  the quality, optionally initializes art only if the nullable source has a value,
+  then calls `parent.PostQualitySet()` and the facility-quality callback. The
+  editor passes `source: null` and does not call either native callback again.
+  Requests for the already-active category return without calling SetQuality.
+  Source: `refs/decompiled/Assembly-CSharp/RimWorld/CompQuality.cs`.
+- `Verse.Book.PostQualitySet()` calls `GenerateBook()`. All Book instances and
+  subclasses are excluded from quality editing to avoid regenerating content.
+  Books can still expose HP if their definition supports it.
+  Source: `refs/decompiled/Assembly-CSharp/Verse/Book.cs`.
+- `RimWorld.StatWorker.ClearCacheForThing(Thing)` removes only that Thing from
+  both the temporary and immutable stat caches. After SetQuality the editor calls
+  `RimWorld.StatDefOf.MaxHitPoints.Worker.ClearCacheForThing(item)` and recomputes
+  the maximum. It preserves the previous absolute HP, clamping to `1..new maximum`
+  when required; it does not preserve percentage damage or heal on an upgrade.
+  Sources: `refs/decompiled/Assembly-CSharp/RimWorld/StatWorker.cs` and
+  `refs/decompiled/Assembly-CSharp/RimWorld/StatDefOf.cs`.
+- Native callbacks can have mod-specific side effects. The service revalidates
+  selection after those callbacks before writing HP. If a callback invalidates
+  the target, or the new maximum is invalid, it reports failure without a further
+  HP edit; it does not attempt a quality rollback that would invoke callbacks again.
+
+#### Native dropdown and input state
+
+`Verse.FloatMenu(List<FloatMenuOption>)` is the native quality dropdown. Each
+choice captures the original target Thing, rather than the panel's mutable
+selection field. All seven categories come from `RimWorld.QualityCategory` and
+use localized `RimWorld.QualityUtility.GetLabel(QualityCategory)` labels. The
+active category has a disabled/null action; the service also enforces idempotence.
+The displayed quality is read from the current item's comp each draw.
+
+HP and stack text buffers are independent. Selection changes reset both. HP Apply
+and Max normalize only the HP buffer. A quality change refreshes an unedited HP
+buffer after any clamp; a pending HP draft remains intact and is validated against
+the new maximum. Live current/maximum HP is always shown separately. Existing
+panel state restoration covers the new controls; the other sections are unchanged.
+
+Sources: `refs/decompiled/Assembly-CSharp/Verse/FloatMenu.cs`,
+`refs/decompiled/Assembly-CSharp/Verse/FloatMenuOption.cs`,
+`refs/decompiled/Assembly-CSharp/RimWorld/QualityCategory.cs`, and
+`refs/decompiled/Assembly-CSharp/RimWorld/QualityUtility.cs`.
+
+Focused tests cover HP bounds (including maximum one), ordinary non-stackable
+selection eligibility, separate stack eligibility, absent quality comps, and
+book/minified exclusions. Native fixtures exercise CompQuality callbacks with
+source:null, same-quality no-ops, per-Thing stat-cache invalidation, HP preservation
+and clamping, fresh Max calculations, and changed-selection rejection. These are
+isolated test objects with a test StatWorker, not an actual game/map run.
+
+Manual checks: use a damaged ground weapon and armor; test valid/invalid HP, Max,
+all seven localized quality choices, upgrade/downgrade HP consistency while paused,
+pending HP text through a quality change, target changes/despawning while a menu
+is open, and book HP without an editable quality menu. Recheck Stack/Large stacks
+on a stackable item, both placeholder sections, and save/reload of edited values.
 
 ### Persistent large stacks: source research
 
-Steel's persistent definition-level limit is now implemented as described below.
+Persistent definition-level limits support eligible ordinary stackable item types.
 Session-only oversized counts were rejected because the excess can be lost.
 The findings below are specific to the local 1.7.4998b sources; source inspection
 and isolated settings tests are not an in-game save/load test.
@@ -137,9 +233,10 @@ and isolated settings tests are not an in-game save/load test.
   `Verse.GenSpawn.Spawn(..., respawningAfterLoad: true)`, which calls
   `Verse.Thing.SpawnSetup(Map, bool)`. The latter logs an error and assigns
   `stackCount = def.stackLimit` whenever the count exceeds the definition limit.
-  The truncation is **not** conditional on `respawningAfterLoad`. Thus, saving
-  50,000 units with an effective limit of 75 does not preserve that count on
-  reload: the normal load path discards 49,925 units instead of splitting them.
+  The truncation is **not** conditional on `respawningAfterLoad`. Thus a saved
+  map-spawned stack of 50,000 units loaded with an effective limit of 75 loses
+  49,925 units on the normal map load path instead of being split. Held stacks
+  have a different loading path, described in the reset notes below.
   Sources: `refs/decompiled/Assembly-CSharp/Verse/Map.cs`,
   `refs/decompiled/Assembly-CSharp/Verse/GenSpawn.cs`, and
   `refs/decompiled/Assembly-CSharp/Verse/Thing.cs`.
@@ -218,8 +315,9 @@ and isolated settings tests are not an in-game save/load test.
   merge calculation multiplies two integers before conversion to float, and
   finite container capacity multiplies stack slots by `def.stackLimit` using
   integers. Extreme counts, high modded HP, or unusually large containers can
-  overflow those intermediates. Prefer an explicit resource-type allowlist and
-  conservative configured limits over a blanket one-million limit for all items.
+  overflow those intermediates. The current default is a conservative 100,000
+  for eligible ordinary stackable items, not a blanket one-million limit for all
+  ThingDefs. Custom item/storage logic can still require compatibility testing.
   Sources: `refs/decompiled/Assembly-CSharp/Verse/Thing.cs` and
   `refs/decompiled/Assembly-CSharp/Verse/ThingOwner.cs`.
 
@@ -234,8 +332,9 @@ and isolated settings tests are not an in-game save/load test.
    Source: `refs/decompiled/Assembly-CSharp/Verse/PatchOperationReplace.cs`.
 2. **Configurable per-definition overrides**: the same native model, with a
    settings layer and a captured baseline for display. This is the recommended
-   direction, now implemented: opt in only Steel at 100,000, keeping 50,000 below the
-   effective limit. Capture the resolved baseline before our override, including
+   direction, now generalized: opt in individual eligible item definitions at
+   100,000, keeping counts such as 50,000 below the effective limit. Capture the
+   resolved baseline before our override, including
    earlier mods' values; apply raises before save loading. Avoid silently lowering
    a higher limit supplied by another mod. Startup restoration occurs before maps
    spawn; explicit runtime enabling refreshes every affected stack's merge lister.
@@ -269,10 +368,11 @@ or invalid merges. It would need additional lifecycle safeguards and bookkeeping
 Sources: `refs/decompiled/Assembly-CSharp/Verse/MapComponent.cs` and
 `refs/decompiled/Assembly-CSharp/Verse/Map.cs`.
 
-The implemented invariant is `1 <= stackCount <= effective ThingDef.stackLimit`.
+Editor Apply enforces `1 <= stackCount <= effective ThingDef.stackLimit`.
 The original limit is retained separately for UI/reference; it is not temporarily
-swapped during spawn or GUI calls. The editor has a persistent enable action and
-no disable/reset action. Apply validates the current effective limit. A future
+swapped during spawn or GUI calls. The editor has persistent enabling and an
+explicitly destructive reset on the next full process restart, described below.
+Reset does not guarantee that existing stacks meet the lower limit. A future
 one-million editor ceiling would require the definition's effective limit to be
 at least that large, plus item-specific validation/testing.
 
@@ -280,7 +380,7 @@ Existing saves with ordinary stacks retain their counts under raised limits;
 native serialization needs no custom quantity format. The override must be
 reapplied before every load. Disabling/removing the mod, lowering a setting, or
 another mod lowering the limit can reintroduce truncation on the next spawn/load.
-Before reducing limits or uninstalling, a future resource-preserving migration
+To reduce limits or uninstall without losing quantities, a future migration
 must normalize all affected map and held/world/inventory stacks, preserve all
 remainders, and save the converted game. Older unconverted saves remain unsafe
 to load without the corresponding effective limits. A restart alone is not a
@@ -299,7 +399,7 @@ of -49,925 for a destination of 50,000 with limit 75 and source 10, versus a
 transfer of 10 with effective limit 100,000. The fixtures did not use the global
 definition database or launch the game. No actual save/load cycle was run.
 
-### Implemented Steel initialization and settings contract
+### Generalized initialization, settings, and Steel compatibility
 
 1. `Verse.LoadedModManager.LoadAllActiveMods()` calls `CreateModClasses()` before
    loading mod XML. `Verse.Mod.GetSettings<T>()` synchronously calls
@@ -312,9 +412,12 @@ definition database or launch the game. No actual save/load cycle was run.
    `Verse.StaticConstructorOnStartupUtility.CallAll()` callback runs.
    Our `CustomStackLimitStartup` appends an initialization callback through
    `Verse.LongEventHandler.ExecuteWhenFinished()` from its startup constructor.
-   The callback captures Steel's resolved limit (unless original metadata was
-   already saved) and applies `max(current limit, saved limit, 100000)` only if
-   Steel was previously enabled. Disabled Steel is left untouched.
+   The callback snapshots resolved ThingDefs and their original limits before
+   applying any override. Saved original metadata takes precedence for display.
+   It first consumes saved reset markers without changing those definitions,
+   then restores only other enabled item keys using `max(current limit, saved limit)`; malformed
+   nonpositive saved limits fall back to the initial 100,000 default. Unenabled
+   definitions are left untouched.
    Sources: `refs/decompiled/Assembly-CSharp/Verse/PlayDataLoader.cs` and
    `refs/decompiled/Assembly-CSharp/Verse/StaticConstructorOnStartupUtility.cs`.
 3. `Verse.LongEventHandler.ExecuteToExecuteWhenFinished()` uses a loop over the
@@ -327,11 +430,31 @@ definition database or launch the game. No actual save/load cycle was run.
    `refs/decompiled/Assembly-CSharp/Verse/Root.cs`, and
    `refs/decompiled/Assembly-CSharp/Verse/Root_Play.cs`.
 
-`CustomStackLimitSettings : Verse.ModSettings` persists dictionaries of enabled
-definition names/effective limits and original-limit metadata. Only Steel is
-allowlisted; unknown settings entries do not enable other definitions. The
-original value is obtained from the resolved definition, never a hardcoded 75,
-and its saved metadata is not replaced by our raised value on later restarts.
+`CustomStackLimitSettings : Verse.ModSettings` persists dictionaries keyed by
+`ThingDef.defName`: enabled effective limits and original-limit metadata, plus a
+set of pending reset keys.
+`CustomStackLimitService.DefaultCustomLimit` is currently 100,000 for new opt-ins;
+saved per-key limits are retained, leaving the internal model open to future
+configuration. Original values are captured from resolved definitions, never
+hardcoded. Original metadata is first written on enabling a key and retained
+after reset, avoiding unrelated configuration changes. Unresolved definitions'
+records are retained unless explicitly reset.
+
+Eligibility requires an ordinary `ThingCategory.Item`, an original/current limit
+greater than one, a valid Thing class, and non-compressed saving. Pawns, buildings,
+corpses, minified Things, and their subclasses are excluded by class as well as
+category. `Verse.ThingDef.thingClass`, `category`, `stackLimit`, and
+`saveCompressible` are the relevant fields.
+Source: `refs/decompiled/Assembly-CSharp/Verse/ThingDef.cs`.
+
+The Steel-only release already used the XML dictionary tags `enabledStackLimits`
+and `originalStackLimits`. Those tags, the settings class, and its filename are
+unchanged. Migration is format-preserving: the same Steel entry is restored,
+including values above 100,000 and its saved original metadata, without a rewrite
+when nothing needs upgrading. Enabling additional types adds keys without
+replacing Steel. Existing ordinary item records keep their raised floor even if
+another mod later marks them save-compressible; new edits are blocked in that
+case. Invalid/non-item records are not applied to unrelated definitions.
 
 The settings path matches the private
 `Verse.LoadedModManager.GetSettingsFilename(string, string)` implementation:
@@ -345,7 +468,7 @@ The ordinary native writer uses `FileMode.Create`, and
 `Verse.Scribe_Deep.Look<T>()` catches some serialization exceptions. Our settings
 store instead writes the same `SettingsBlock/ModSettings` format to a temporary
 file in the target directory, calls `ExposeData()` directly, finalizes it, reads
-it back through Scribe, compares both dictionaries, flushes it to disk, and then
+it back through Scribe, compares both dictionaries and the reset set, flushes it to disk, and then
 replaces the target. The previous settings remain intact if serialization or
 verification fails. Settings writes are rejected while Scribe is already active;
 they never force-stop an unrelated game save/load.
@@ -353,58 +476,169 @@ Sources: `refs/decompiled/Assembly-CSharp/Verse/ScribeSaver.cs`,
 `refs/decompiled/Assembly-CSharp/Verse/Scribe_Deep.cs`, and
 `refs/decompiled/Assembly-CSharp/Verse/Scribe_Collections.cs`.
 
-The enable action persists successfully before changing Steel's definition and
+Enabling the checkbox persists successfully before changing that type's definition and
 never changes quantities. Apply still changes quantity only after selection and
 integer validation. Startup records higher observed limits for already-enabled
-Steel, so they survive later restarts even without an editor Apply. Apply also
+item types, so they survive later restarts even without an editor Apply. Apply also
 persists any higher current limit supplied by another mod, then restores any
-previously saved floor if needed. Startup write failures retain the existing
-limit and produce one error; failed persistence blocks quantity edits until a
+previously saved floor if needed. Startup upgrade write failures retain the existing
+limit and produce one error; failed limit persistence blocks quantity edits until a
 retry succeeds. There are no per-frame writes. Runtime raises
-notify `ListerMergeables.Notify_ThingStackChanged()` for Steel stacks across all
+notify `ListerMergeables.Notify_ThingStackChanged()` for that type's stacks across all
 loaded maps, since previously full stacks may now have merge room. Other item
-definitions and quantities are untouched. There is no disable/reset operation.
+definitions and quantities are untouched. Persistence errors are tracked per key:
+a successful write for another type does not hide the failed type's error.
+The native checkbox also offers a confirmed restart-only reset and cancellation,
+as described below; neither action changes the active definition or any quantities.
 
-Initial support excludes a save-compressible Steel definition. Other mods can
+New opt-ins exclude save-compressible definitions. Other mods can
 still introduce custom storage behavior, overwrite limits after our startup
 callback, or hot-reload definitions; those interactions are not guaranteed by
 this feature. The service preserves higher limits it observes and persists them
 before our edits, but it cannot prevent an external mod from lowering a limit
 later. Removing the mod/settings or loading an unmigrated save without the saved
-effective limits remains unsafe. Quantity-preserving migration is not implemented.
+effective limits remains unsafe. No scanner, manual trimming, or lossless migration
+is implemented. The separate, unimplemented coverage research and scan/trim design
+are in [reset-and-trim-design.md](reset-and-trim-design.md).
+
+### Destructive Reset Stack Limit on full process restart
+
+`CustomStackLimitSettings.PendingResets` uses the additional optional XML tag
+`pendingStackLimitResets`, serialized by
+`Verse.Scribe_Collections.Look<string>(ref HashSet<string>, string, LookMode.Value)`.
+Missing tags load as an empty set, preserving old Steel and multi-type settings.
+Copies, equality checks, and atomic store verification include the set.
+Source: `refs/decompiled/Assembly-CSharp/Verse/Scribe_Collections.cs`.
+
+`CustomStackLimitService.TryScheduleReset()` persists the chosen key's marker
+before reporting success. It retains that key's enabled floor and original
+metadata for the rest of the process. Ordinary Apply and persistence of higher
+observed limits preserve the marker. `TryCancelReset()` durably removes only the
+marker; neither action lowers the current limit, changes a count, or refreshes a
+map. Repeated initialization and in-process save loading do not consume it.
+`IsEnabled()` describes the active override; `IsResetPending()` describes the
+scheduled reset. The UI shows the desired next-start state while pending.
+
+The existing startup hook consumes markers after definition resolution, before
+save loading. For each reset type, it skips our override and atomically removes
+that enabled entry and marker, retaining original-limit metadata. The actual
+definition stays at its freshly resolved native/other-mod limit; we never assign
+historical original metadata over it. Consequently a higher other-mod limit is
+respected, and changed mod configurations may yield an effective limit different
+from the historical "Original" display. After startup the checkbox is unchecked
+and the restart badge is gone. Explicit enabling can opt the type in again.
+
+If startup cleanup cannot be persisted, the saved marker still suppresses that
+override in memory and on subsequent process starts. It is not shown as a new
+pending reset after it has taken effect. An error is reported once by the startup
+hook and exposed in the editor; a future explicit enable must durably clear the
+marker first. Failed schedule/cancel writes leave the previous state intact.
+No new Harmony patch or settings filename/schema rename is required.
+
+`Verse.Dialog_MessageBox.CreateConfirmation(TaggedString, Action, bool destructive,
+string title, WindowLayer)` supplies native Confirm/Go back behavior and destructive
+button styling. Only Confirm schedules a reset. The callback captures the
+confirmed ThingDef, so later selection changes cannot reset another type.
+Source: `refs/decompiled/Assembly-CSharp/Verse/Dialog_MessageBox.cs`.
+
+For compact confirmation text, the editor shortens the native dialog to 260
+units high after adding it, preserving its default width and centering.
+`Verse.WindowStack.Add()` calls `Window.PreOpen()` synchronously, which initializes
+the public `Window.windowRect`; changing that rectangle afterward preserves the
+factory's buttons and callbacks. The native message body scrolls for long names.
+`Verse.Def.LabelCap` supplies the selected type's display name.
+Sources: `refs/decompiled/Assembly-CSharp/Verse/WindowStack.cs`,
+`refs/decompiled/Assembly-CSharp/Verse/Window.cs`, and
+`refs/decompiled/Assembly-CSharp/Verse/Def.cs`.
+
+#### Held stacks do not all truncate on reload
+
+- `Verse.ThingOwner<T>.ExposeData()` loads `innerList` through Scribe collections,
+  reconnects `holdingOwner`, and removes null/invalid minified entries in
+  `PostLoadInit`. It does **not** call `TryAdd()`, `SpawnSetup()`, or cap counts.
+  `Verse.ThingOwner.ExposeData()` only serializes container options. Nested deep
+  holders can therefore retain oversized item counts after a reset and reload.
+  Source: `refs/decompiled/Assembly-CSharp/Verse/ThingOwner.cs`.
+- `Verse.Pawn_InventoryTracker.ExposeData()` and
+  `Verse.Pawn_CarryTracker.ExposeData()` deep-save their `innerContainer`.
+  `RimWorld.ActiveTransporterInfo.ExposeData()` and
+  `RimWorld.CompTransporter.PostExposeData()` do likewise for ordinary held items;
+  their additional world-pawn reference handling does not normalize those counts.
+  This also matters for pawn inventories nested in caravans or transporters.
+  Sources: `refs/decompiled/Assembly-CSharp/Verse/Pawn_InventoryTracker.cs`,
+  `refs/decompiled/Assembly-CSharp/Verse/Pawn_CarryTracker.cs`,
+  `refs/decompiled/Assembly-CSharp/RimWorld/ActiveTransporterInfo.cs`, and
+  `refs/decompiled/Assembly-CSharp/RimWorld/CompTransporter.cs`.
+- `Verse.ThingOwner.TryDrop()` delegates to `Verse.GenDrop.TryDropSpawn()`;
+  placement may split into legal chunks, fail for lack of room, or later encounter
+  the direct spawn clamp. The previously verified `Thing.SpawnSetup()` clamp
+  discards excess for a directly spawned oversized Thing, including normal map
+  reloads. Held Things do not necessarily take that path during loading.
+  Sources: `refs/decompiled/Assembly-CSharp/Verse/ThingOwner.cs`,
+  `refs/decompiled/Assembly-CSharp/Verse/GenDrop.cs`,
+  `refs/decompiled/Assembly-CSharp/Verse/Thing.cs`, and
+  `refs/decompiled/Assembly-CSharp/Verse/GenPlace.cs`.
+- Remaining oversized stacks violate assumptions in merge/haul/container code:
+  negative merge transfers are possible as documented above. Reset is an
+  explicitly destructive removal of our override, not guaranteed automatic trim
+  or a safe migration. Unusual modded storage may behave differently.
+
+Settings affect the item type across **all saves in this game profile**. No map,
+inventory, world object, nested holder, or other save file on disk is scanned or
+modified by reset. Data loss can occur when any such save is loaded or during
+later gameplay. Removing the mod/settings carries the same class of risks.
+Definition hot reload is not a supported substitute for a full process restart.
 
 #### Focused verification and full-restart manual check
 
 `tests/RimWorldUtilities.Tests` is a package-free console test project. The core
 suite covers numeric bounds, opt-in defaults, resolved baseline capture, failed
-writes, unsupported types, monotonic limits, and other mods' higher limits. With
+writes, multiple definition keys, unsupported types, monotonic limits, per-type
+errors, Steel settings migration, other mods' higher limits, scheduling/cancelling
+resets, retained markers after failed writes, and restart-only activation. With
 `RIMWORLD_GAME_DIR` pointing to the installed game DLL directory, it additionally
 uses native Scribe serialization and loads the saved settings in a fresh test
 process. Runtime DLLs are read-only; fixture settings live in a temporary folder.
 See `tests/README.md` for the commands and the distinction from launching RimWorld.
 
-The full suite passed 113 assertions plus three assertions in the fresh process.
+The full suite, including HP/quality checks, passed 284 assertions plus 28
+assertions across five fresh processes. Fresh-process checks cover cancelled
+resets, reset completion, and another restart after completion.
 It does not exercise a game map or constitute a full RimWorld restart test.
 
 Manual verification after the user deploys the build:
 
-1. With fresh mod settings, select Steel. Check its original/effective limits
-   match the resolved definition. Other resources must have no enable action.
-2. Enable the persistent limit. Check the effective limit becomes 100,000 (or
+1. With fresh mod settings, select Steel, Wood, and Medicine in turn. Check their
+   original/effective limits match the resolved definitions and each starts
+   unchecked. Ineligible/non-stackable selections must not offer new opt-ins.
+2. Enable "Large stacks" for two types. Check each effective limit becomes 100,000 (or
    retains a higher existing limit), the original value remains visible, and the
-   quantity/input buffer do not change. There must be no disable/reset action.
+   quantity/input buffer do not change. A third unenabled type must remain unchanged.
 3. Apply 50,000, save the game, fully quit RimWorld, then start a new RimWorld
    process and load that save. Check the quantity before opening Utilities;
-   then verify the enabled status and both displayed limits. Repeat save/load.
+   then verify both types' checked status and displayed limits. Repeat save/load.
 4. Haul, merge, split, and store Steel on shelves/in containers; verify total
    quantity is preserved. Include saving/restarting while a pawn carries Steel
    or it is held in an inventory. Carrying capacity must still constrain hauling.
 5. Reject zero, negatives, text, and values above the effective limit. Confirm
-   unrelated quantities and the other two panels remain unchanged. Do not remove
-   this mod/settings on a valuable save containing large stacks; no safe migration
-   or uninstall action exists yet.
+   unrelated quantities, HP/quality controls, and the other two panels remain unchanged.
+6. In a disposable test save with two enabled types, uncheck one type. Go back
+   must leave it checked. Confirm must show "Restart required", an unchecked box,
+   and the same high effective limit and quantity. Save/reload without quitting:
+   reset must still be pending and the high limit must remain active.
+7. Re-check before quitting: the badge must disappear with the high limit intact.
+   Fully quit/start and verify the raised limit persists. Then schedule again,
+   fully quit/start, and verify the selected type is unchecked at its resolved
+   native/other-mod limit while the other type remains enabled. Restart again to
+   verify it stays off. Original metadata must remain visible.
+8. Only on disposable saves, include oversized map stacks, carried/inventory
+   items, and nested containers/transporters. Record counts before/after restart
+   and later unloading/hauling/merging. Map stacks may lose excess immediately;
+   held stacks may remain oversized. Do not expect normalization or preservation
+   of quantities after confirmed reset. Check any higher limit from another mod
+   is retained. Other save files are affected by the settings but never scanned.
 
-HP, quality, and rot mutation APIs have not been researched or implemented yet.
+Rot Progress editing is not implemented.
 
 ## Crafting
 

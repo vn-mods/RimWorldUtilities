@@ -1,25 +1,26 @@
 using System;
 using System.Collections.Generic;
+using RimWorld;
 using Verse;
 
 namespace RimWorldUtilities.Services;
 
 internal sealed class CustomStackLimitService
 {
-    // Only these definitions can be enabled. Settings entries alone cannot add support.
-    private static readonly Dictionary<string, int> SupportedLimits = new()
-    {
-        ["Steel"] = 100_000
-    };
+    public const int DefaultCustomLimit = 100_000;
 
     private readonly CustomStackLimitSettings settings;
     private readonly Action<CustomStackLimitSettings> persist;
     private readonly Action<ThingDef> notifyLimitChanged;
     private readonly Dictionary<string, ThingDef> definitions = new();
+    private readonly Dictionary<string, int> originalLimits = new();
+    private readonly Dictionary<string, string> persistenceErrors = new();
+    // Startup reset markers remain authoritative even if their disk cleanup fails.
+    private readonly HashSet<string> resetAtStartup = new();
     private CustomStackLimitSettings persisted;
 
     public bool IsInitialized { get; private set; }
-    public string PersistenceError { get; private set; } = string.Empty;
+    public string PersistenceError => string.Join(Environment.NewLine, persistenceErrors.Values);
 
     public CustomStackLimitService(CustomStackLimitSettings settings,
         Action<CustomStackLimitSettings> persist, Action<ThingDef> notifyLimitChanged)
@@ -30,65 +31,130 @@ internal sealed class CustomStackLimitService
         persisted = settings.Copy();
     }
 
-    public void Initialize(Func<string, ThingDef?> findDefinition)
+    public void Initialize(IEnumerable<ThingDef> resolvedDefinitions)
     {
         if (IsInitialized)
         {
             return;
         }
 
-        foreach (var supported in SupportedLimits)
+        // Capture resolved baselines before applying any of our overrides. Only opt-in
+        // definitions get saved baseline metadata; unrelated definitions are never changed.
+        foreach (var definition in resolvedDefinitions)
         {
-            var definition = findDefinition(supported.Key);
-            if (definition == null)
+            definitions.Add(definition.defName, definition);
+            originalLimits[definition.defName] =
+                settings.OriginalLimits.TryGetValue(definition.defName, out var original) && original > 0
+                    ? original : definition.stackLimit;
+        }
+
+        // Definitions are freshly resolved at this process boundary. Leave reset types
+        // untouched, including higher limits from other mods. Never assign an old baseline.
+        resetAtStartup.UnionWith(settings.PendingResets);
+        foreach (var name in resetAtStartup)
+        {
+            var candidate = settings.Copy();
+            candidate.EnabledLimits.Remove(name);
+            candidate.PendingResets.Remove(name);
+            TrySaveSettings(candidate, name, out _);
+        }
+
+        // The existing Steel dictionaries/tags are unchanged: old Steel settings are
+        // restored by this same path, including values above the initial default.
+        foreach (var saved in new List<KeyValuePair<string, int>>(settings.EnabledLimits))
+        {
+            if (resetAtStartup.Contains(saved.Key) ||
+                !definitions.TryGetValue(saved.Key, out var definition) ||
+                !IsOrdinaryItemDefinition(definition) || GetOriginalLimit(definition) <= 1)
             {
-                continue;
+                continue; // Keep unresolved/unsupported records; never discard their metadata.
             }
 
-            definitions.Add(supported.Key, definition);
-            if (!settings.OriginalLimits.TryGetValue(supported.Key, out var original) || original < 1)
-            {
-                settings.OriginalLimits[supported.Key] = definition.stackLimit;
-            }
-
-            if (settings.EnabledLimits.TryGetValue(supported.Key, out var savedLimit))
-            {
-                // Keep a higher observed limit across later restarts, even without an editor Apply.
-                TryPersistLimit(definition, out _);
-                // Reapply before maps spawn; never reduce a higher limit from another mod.
-                definition.stackLimit = Math.Max(definition.stackLimit, Math.Max(savedLimit, supported.Value));
-            }
+            var limit = saved.Value > 1 ? saved.Value : DefaultCustomLimit;
+            TryPersistLimit(definition, limit, out _);
+            // Restore even if a previously enabled definition is now compressed: do not
+            // silently lower its limit. Further edits are blocked by IsSupported below.
+            definition.stackLimit = Math.Max(definition.stackLimit, limit);
         }
 
         IsInitialized = true;
     }
 
-    public bool IsSupported(ThingDef definition) =>
+    private bool IsRegistered(ThingDef definition) =>
         definitions.TryGetValue(definition.defName, out var resolved) && ReferenceEquals(resolved, definition);
 
+    public bool IsSupported(ThingDef definition) =>
+        IsRegistered(definition) && IsOrdinaryItemDefinition(definition) &&
+        GetOriginalLimit(definition) > 1 && definition.stackLimit > 1 && !definition.saveCompressible;
+
     public bool IsEnabled(ThingDef definition) =>
-        IsSupported(definition) && settings.EnabledLimits.ContainsKey(definition.defName);
+        IsRegistered(definition) && !resetAtStartup.Contains(definition.defName) &&
+        settings.EnabledLimits.ContainsKey(definition.defName);
+
+    public bool IsResetPending(ThingDef definition) =>
+        IsEnabled(definition) && settings.PendingResets.Contains(definition.defName);
 
     public int GetOriginalLimit(ThingDef definition) =>
-        IsSupported(definition) && settings.OriginalLimits.TryGetValue(definition.defName, out var original)
+        IsRegistered(definition) && originalLimits.TryGetValue(definition.defName, out var original)
             ? original : definition.stackLimit;
+
+    public string GetPersistenceError(ThingDef definition) =>
+        persistenceErrors.TryGetValue(definition.defName, out var error) ? error : string.Empty;
 
     public bool TryEnable(ThingDef definition, out string message)
     {
-        if (!IsInitialized || !IsSupported(definition) || definition.category != ThingCategory.Item ||
-            definition.stackLimit <= 1 || definition.saveCompressible)
+        if (!IsInitialized || !IsSupported(definition))
         {
-            message = "Persistent custom limits are available only for the supported Steel definition.";
+            message = "Large stacks require an ordinary, non-compressed stackable item.";
             return false;
         }
 
-        if (!TryPersistLimit(definition, out message))
+        if (!TryPersistLimit(definition, DefaultCustomLimit, out message, cancelReset: true))
         {
             return false;
         }
 
+        resetAtStartup.Remove(definition.defName);
         ApplyLimit(definition);
-        message = $"Persistent Steel limit enabled: {definition.stackLimit}. Quantities were not changed.";
+        message = $"Large stacks enabled for {definition.defName}: {definition.stackLimit}. Quantities were not changed.";
+        return true;
+    }
+
+    public bool TryScheduleReset(ThingDef definition, out string message)
+    {
+        if (!IsInitialized || !IsEnabled(definition))
+        {
+            message = "Large stacks are not enabled for this item type.";
+            return false;
+        }
+
+        var candidate = settings.Copy();
+        candidate.PendingResets.Add(definition.defName);
+        if (!TrySaveSettings(candidate, definition.defName, out message))
+        {
+            return false;
+        }
+
+        message = "Restart required";
+        return true;
+    }
+
+    public bool TryCancelReset(ThingDef definition, out string message)
+    {
+        if (!IsInitialized || !IsResetPending(definition))
+        {
+            message = "No reset is pending for this item type.";
+            return false;
+        }
+
+        var candidate = settings.Copy();
+        candidate.PendingResets.Remove(definition.defName);
+        if (!TrySaveSettings(candidate, definition.defName, out message))
+        {
+            return false;
+        }
+
+        message = "Reset cancelled";
         return true;
     }
 
@@ -102,14 +168,15 @@ internal sealed class CustomStackLimitService
 
         if (IsEnabled(definition))
         {
-            if (definition.saveCompressible)
+            if (!IsSupported(definition))
             {
-                error = "Steel's definition uses compressed saving. Persistent count editing is unavailable.";
+                error = "This item definition no longer supports persistent large-stack editing.";
                 return false;
             }
 
             // A higher limit from another mod must also be durable before we permit edits.
-            if (!TryPersistLimit(definition, out error))
+            var savedLimit = settings.EnabledLimits[definition.defName];
+            if (!TryPersistLimit(definition, savedLimit > 1 ? savedLimit : DefaultCustomLimit, out error))
             {
                 return false;
             }
@@ -121,16 +188,18 @@ internal sealed class CustomStackLimitService
         return true;
     }
 
-    private bool TryPersistLimit(ThingDef definition, out string error)
+    private bool TryPersistLimit(ThingDef definition, int requestedLimit, out string error,
+        bool cancelReset = false)
     {
         var name = definition.defName;
         settings.EnabledLimits.TryGetValue(name, out var savedLimit);
-        var limit = Math.Max(definition.stackLimit, Math.Max(savedLimit, SupportedLimits[name]));
+        var limit = Math.Max(definition.stackLimit, Math.Max(savedLimit, requestedLimit));
         var original = GetOriginalLimit(definition);
         if (persisted.EnabledLimits.TryGetValue(name, out var durableLimit) && durableLimit >= limit &&
-            persisted.OriginalLimits.TryGetValue(name, out var durableOriginal) && durableOriginal == original)
+            persisted.OriginalLimits.TryGetValue(name, out var durableOriginal) && durableOriginal == original &&
+            (!cancelReset || !persisted.PendingResets.Contains(name)))
         {
-            PersistenceError = string.Empty;
+            persistenceErrors.Remove(name);
             error = string.Empty;
             return true;
         }
@@ -138,20 +207,37 @@ internal sealed class CustomStackLimitService
         var candidate = settings.Copy();
         candidate.EnabledLimits[name] = limit;
         candidate.OriginalLimits[name] = original;
+        if (cancelReset)
+        {
+            candidate.PendingResets.Remove(name);
+        }
+
+        return TrySaveSettings(candidate, name, out error);
+    }
+
+    private bool TrySaveSettings(CustomStackLimitSettings candidate, string name, out string error)
+    {
+        if (persisted.Matches(candidate))
+        {
+            persistenceErrors.Remove(name);
+            error = string.Empty;
+            return true;
+        }
+
         try
         {
             persist(candidate);
         }
         catch (Exception exception)
         {
-            error = $"Could not save persistent stack limits: {exception.Message}";
-            PersistenceError = error;
+            error = $"Could not save large-stack settings for {name}: {exception.Message}";
+            persistenceErrors[name] = error;
             return false;
         }
 
         settings.CopyFrom(candidate);
         persisted = candidate.Copy();
-        PersistenceError = string.Empty;
+        persistenceErrors.Remove(name);
         error = string.Empty;
         return true;
     }
@@ -164,5 +250,14 @@ internal sealed class CustomStackLimitService
             definition.stackLimit = limit;
             notifyLimitChanged(definition);
         }
+    }
+
+    private static bool IsOrdinaryItemDefinition(ThingDef definition)
+    {
+        var type = definition.thingClass;
+        return definition.category == ThingCategory.Item && type != null &&
+            typeof(Thing).IsAssignableFrom(type) && !typeof(Pawn).IsAssignableFrom(type) &&
+            !typeof(Building).IsAssignableFrom(type) && !typeof(Corpse).IsAssignableFrom(type) &&
+            !typeof(MinifiedThing).IsAssignableFrom(type);
     }
 }

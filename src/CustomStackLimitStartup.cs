@@ -11,11 +11,12 @@ internal static class CustomStackLimitStartup
         LongEventHandler.ExecuteWhenFinished(() =>
         {
             var service = RimWorldUtilitiesMod.Instance?.StackLimits;
-            service?.Initialize(DefDatabase<ThingDef>.GetNamedSilentFail);
+            service?.Initialize(DefDatabase<ThingDef>.AllDefsListForReading);
             if (!string.IsNullOrEmpty(service?.PersistenceError))
             {
-                Log.Error($"[RimWorldUtilities] {service.PersistenceError} The existing limit was retained; " +
-                    "resolve the settings error before editing or changing stack-limit mods.");
+                Log.Error($"[RimWorldUtilities] {service.PersistenceError} " +
+                    "Saved reset markers still take effect; other saved limits were retained. " +
+                    "Resolve the settings error before changing stack-limit mods.");
             }
         });
     }
