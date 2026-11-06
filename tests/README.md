@@ -87,6 +87,20 @@ branching and NPC exclusion. It models those counters; a real pawn skill tracker
 and complete bill job still require in-game checks. Fresh-process settings checks
 exercise 20× with Legendary on, 3× with it off, and return to 1×.
 
+Colonist Needs checks use scoped in-memory pawn/quest/tick fixtures. They cover
+each independent basic toggle, immediate application and failed writes, actual
+MaxLevel/clamping, dynamic need lists, unsupported definitions, strict eligibility
+(including babies, children, prisoners, slaves, lodgers and mechanoids), and shared
+settings preservation. The native checks patch the real Pawn_NeedsTracker method
+and run instrumented Need subclasses through its actual 150-tick hash gate and
+native interval loop. They verify before/after timing, one original update,
+batched delta, no off-phase writes, changed eligibility, removal/addition, disable
+during the native call and detached trackers. These do not run a complete pawn,
+map or caravan tick cycle; those paths are verified by source and manual tests.
+Scoped fixtures restore Current.Game and DefOf fields without reading the player
+profile. Fresh test processes verify all eight settings on/off while retaining
+pending resets, raised limits, crafting preferences and unknown future keys.
+
 The fresh process is the test executable, not RimWorld. Actual in-game save/load,
 map spawning, hauling, splitting, and merging still require manual verification.
 Reset is explicitly destructive: map-spawned stacks can lose excess while held

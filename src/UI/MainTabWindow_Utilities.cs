@@ -9,7 +9,7 @@ public sealed class MainTabWindow_Utilities : MainTabWindow
 {
     private const float PanelGap = 12f;
     private const float ItemPanelHeight = 276f;
-    private const float PlaceholderMinHeight = 112f;
+    private const float CraftingMinHeight = 112f;
 
     private Vector2 scrollPosition;
 
@@ -39,20 +39,26 @@ public sealed class MainTabWindow_Utilities : MainTabWindow
             Text.Anchor = TextAnchor.UpperLeft;
             Text.WordWrap = true;
 
-            var minimumHeight = ItemPanelHeight + (PlaceholderMinHeight + PanelGap) * (panels.Length - 1);
+            var width = inRect.width;
+            var needsHeight = ColonistNeedsPanel.RequiredHeight(width);
+            var minimumHeight = ItemPanelHeight + needsHeight + CraftingMinHeight + PanelGap * 2f;
+            if (minimumHeight > inRect.height)
+            {
+                width -= 16f;
+                needsHeight = ColonistNeedsPanel.RequiredHeight(width);
+                minimumHeight = ItemPanelHeight + needsHeight + CraftingMinHeight + PanelGap * 2f;
+            }
             var contentHeight = Math.Max(inRect.height, minimumHeight);
-            var contentRect = new Rect(0f, 0f,
-                inRect.width - (contentHeight > inRect.height ? 16f : 0f), contentHeight);
+            var contentRect = new Rect(0f, 0f, width, contentHeight);
 
             Widgets.BeginScrollView(inRect, ref scrollPosition, contentRect);
             try
             {
-                var placeholderHeight = (contentHeight - ItemPanelHeight - PanelGap * (panels.Length - 1))
-                    / (panels.Length - 1);
+                var craftingHeight = contentHeight - ItemPanelHeight - needsHeight - PanelGap * 2f;
                 var y = 0f;
                 for (var i = 0; i < panels.Length; i++)
                 {
-                    var height = i == 0 ? ItemPanelHeight : placeholderHeight;
+                    var height = i == 0 ? ItemPanelHeight : i == 1 ? needsHeight : craftingHeight;
                     panels[i].Draw(new Rect(0f, y, contentRect.width, height));
                     y += height + PanelGap;
                 }

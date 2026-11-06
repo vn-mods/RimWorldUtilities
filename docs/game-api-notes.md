@@ -949,4 +949,169 @@ Manual checks after user deployment:
 
 ## Colonist Needs
 
-To be investigated.
+### Phase 1: Basic Keep Full
+
+`ColonistNeedsService` manages eight independent identifiers: `Food`, `Rest`,
+`Joy` (UI: Recreation), `Mood`, `Comfort`, `Beauty`, `Outdoors` and `Indoors`.
+All default off. The existing `CustomStackLimitSettings` serializes a string set
+under `enabledColonistNeeds`; missing old tags load as empty. Copying and atomic
+read-back verification include the set. Unknown saved identifiers are preserved
+for compatibility but cannot activate this phase's refill logic. No second
+`ModSettings` type or new assembly dependency is introduced.
+
+The service saves a candidate copied from the latest shared settings before
+enabling/disabling a toggle. Failed writes retain the previous state. Successful
+enable immediately fills only that need for eligible accessible pawns; disable
+stops future writes without resetting its current value or reversing gameplay
+effects. Item Editor settings, pending resets and independent crafting flags are
+retained in either direction when another service writes shared settings.
+
+### Strict eligibility, separate from crafting
+
+`ColonistNeedsService.IsEligible(Pawn)` requires all of the following:
+
+- Alive and not destroyed; actual non-null faction equal to `Faction.OfPlayer`.
+- `Pawn.IsColonist`, and explicitly neither `IsPrisoner` nor `IsSlave`.
+- `HostFaction == null`, nullable `Pawn.GuestStatus == null`, and
+  `QuestUtility.IsQuestLodger(pawn) == false`.
+- Not a mechanoid and not `Pawn.Suspended`.
+
+`Pawn.IsColonist` requires player-faction humanlike status but can include secure
+slaves, so it is insufficient by itself. It has no age restriction: children and
+babies qualify. There is no Spawned, current-map or player-control requirement,
+so unspawned travelers and downed colonists remain eligible. Animals, foreign
+visitors/enemies, guests, temporary lodgers and arrested player pawns are excluded.
+This intentionally differs from crafting's inclusion of player slaves/mechanoids.
+Sources: `refs/decompiled/Assembly-CSharp/Verse/Pawn.cs`,
+`refs/decompiled/Assembly-CSharp/Verse/RaceProperties.cs`,
+`refs/decompiled/Assembly-CSharp/RimWorld/Pawn_GuestTracker.cs`, and
+`refs/decompiled/Assembly-CSharp/RimWorld/QuestUtility.cs`.
+
+Use the nullable **Pawn** guest-status property rather than rejecting the guest
+tracker's default `Guest` enum: ordinary colonists can have a tracker in that
+default state without actually being guests. `IsQuestLodger()` checks extra home
+or mini factions from quest parts. `Pawn.Suspended` includes suspended holders
+through `Thing.Suspended`, and quest-reserved world pawns through `WorldPawns`.
+Sources: `refs/decompiled/Assembly-CSharp/Verse/Thing.cs` and the files above.
+
+### Public levels and native 150-tick integration
+
+`RimWorld.Need.CurLevel` is a public virtual float property; its native setter
+clamps to `0..MaxLevel`. `Need.MaxLevel` is virtual and must be read for each
+refill, not assumed to be 1. In particular, `Need_Food.MaxLevel` can reflect pawn
+size/life stage or the MaxNutrition stat. The service reads the live tracker list,
+checks existing NeedDef identifiers, and sets `CurLevel = MaxLevel` only when
+different. Nonfinite/negative maxima and missing definitions are ignored. It
+never adds/removes Needs, changes NeedDefs, calls `NeedInterval()` manually, or
+retains Need references between passes.
+Sources: `refs/decompiled/Assembly-CSharp/RimWorld/Need.cs` and
+`refs/decompiled/Assembly-CSharp/RimWorld/Need_Food.cs`.
+
+`ColonistNeedsPatch` registers one Harmony prefix/postfix pair on the exact
+public instance method:
+
+```csharp
+void RimWorld.Pawn_NeedsTracker.NeedsTrackerTickInterval(int delta)
+```
+
+Owner ID: `slava.rimworldutilities.needs.basic`. Registration occurs once in the
+mod constructor after creating the service; missing method/owner field or patch
+errors mark the feature unavailable and log one warning. Prefix/postfix do not
+skip or replace the original method. The verified private `pawn` field is passed
+by Harmony field injection. The prefix rejects detached trackers and uses the
+same native `pawn.IsHashIntervalTick(150, delta)` gate as the original method.
+It fills enabled existing needs before the native loop. A bool `__state` enables
+the postfix, which re-reads current needs, toggle state and eligibility after
+native callbacks. Removed/replaced needs cannot leave stale references; newly
+added needs can be filled without another interval call. Disabling or becoming
+ineligible during the native update prevents postfix refill.
+Sources: `refs/decompiled/Assembly-CSharp/RimWorld/Pawn_NeedsTracker.cs` and
+`refs/decompiled/Assembly-CSharp/Verse/Gen.cs`.
+
+`Gen.IsHashIntervalTick(Thing, int interval, int delta)` uses
+`Math.Abs(HashOffsetTicks() % interval) < delta`, including signed hash offsets.
+Do not substitute global `TicksGame % 150`, assume every pawn has the same phase,
+or manually catch up intervals. With all supported toggles off, the patch takes
+a short path without eligibility scans; periodic passes allocate no snapshots
+or collections. Only enabling a toggle creates a temporary reference-identity
+set for immediate application, deduplicating overlapping finder routes.
+
+Mood uses the same current-level property. `Need_Mood.NeedInterval()` and its
+`Need_Seeker` base continue executing normally, including native thought/memory
+updates. The mod does not write thoughts, memories, instant/target mood or mental
+states, and does not end existing mental breaks or clear health conditions.
+Needs may change through unrelated events between native refill intervals;
+this is not a per-frame freeze.
+Sources: `refs/decompiled/Assembly-CSharp/RimWorld/Need_Mood.cs` and
+`refs/decompiled/Assembly-CSharp/RimWorld/Need_Seeker.cs`.
+
+### Loaded maps and traveling colonists
+
+Immediate enable uses
+`RimWorld.PawnsFinder.AllMapsCaravansAndTravellingTransporters_Alive`, followed by
+the service's stricter eligibility. The broad finder combines every loaded map,
+caravan and traveling transporter, plus supported gravship pawns. Its `AllMaps`
+route uses `Verse.MapPawns.AllPawns`, which includes spawned pawns and unspawned
+pawns found recursively in map holders, such as carried pawns. Finder lists are
+shared scratch results and are not retained by the service.
+Sources: `refs/decompiled/Assembly-CSharp/RimWorld/PawnsFinder.cs` and
+`refs/decompiled/Assembly-CSharp/Verse/MapPawns.cs`.
+
+`RimWorld.Planet.WorldPawns.WorldPawnsTick()` calls `Thing.DoTick()` on active
+world pawns. `Verse.Pawn.TickInterval(int)` calls the same needs-tracker interval
+for living pawns, and `WorldPawns.ShouldMothball(Pawn)` excludes caravan members
+and pawns traveling in transport pods. `Caravan.AddPawn(...)` registers carried
+pawns with WorldPawns where applicable. Thus vanilla caravan colonists receive
+the same hook: no second refill loop, duplicate native interval call, or global
+GameComponent scan is required. `Caravan_NeedsTracker` separately satisfies
+food/rest/joy; that behavior is preserved.
+Sources: `refs/decompiled/Assembly-CSharp/RimWorld/Planet/WorldPawns.cs`,
+`refs/decompiled/Assembly-CSharp/Verse/Thing.cs`,
+`refs/decompiled/Assembly-CSharp/Verse/Pawn.cs`,
+`refs/decompiled/Assembly-CSharp/RimWorld/Planet/Caravan.cs`, and
+`refs/decompiled/Assembly-CSharp/RimWorld/Planet/Caravan_NeedsTracker.cs`.
+
+Coverage is not a guarantee for unknown custom world holders, mothballed pawns
+outside the supported travel paths, or mods replacing/skipping the tracker
+update. Suspended pawns remain intentionally excluded. No all-save-file or
+arbitrary-holder completeness claim is made.
+
+### UI and verification
+
+`ColonistNeedsPanel` displays Basic with two checkbox columns when content width
+is at least 360 units, otherwise one column. Each has a short Keep Full tooltip.
+`MainTabWindow_Utilities` reserves the required needs-panel height and scrolls
+the three sections; Item Editor and Crafting contents are preserved. Rendering
+state is restored by the existing `UtilitiesPanel` guard. Only runtime/settings
+errors add a compact status line. No Special controls are displayed.
+
+Release build passes with zero warnings/errors. The complete suite passes 725
+assertions plus 70 across ten fresh test processes. Needs checks cover each
+toggle, native level clamping/changed maxima, strict eligibility, missing/added/
+removed needs, immediate application, disabled behavior and shared persistence.
+The native integration test patches the actual tracker and runs instrumented
+Need subclasses through its real hash gate and interval loop. It verifies a
+single original update, before/after refill, batched delta, no off-phase writes,
+no manual interval for a new need, changed eligibility, mid-update disable and
+detached tracker handling. In-memory fixtures restore their Current.Game and
+DefOf bindings; no player profile, map or RimWorld process is started.
+
+Manual checks after user deployment:
+
+1. Confirm all eight defaults are off with older settings. Enable each in turn
+   and verify immediate fill of that existing need only. Disable it and check
+   normal decline resumes without resetting the previous full value. Include
+   babies/children lacking some adult needs; no extra needs should appear.
+2. Check free colonists on multiple loaded maps and in a caravan, including
+   unspawned/carried pawns where available. Prisoners (including player pawns),
+   slaves, visitors, quest lodgers, animals, mechanoids and suspended pawns must
+   remain unaffected. Resume a suspended eligible colonist and check the next
+   native interval handles them normally.
+3. With Mood enabled, inspect current mood, thoughts, target mood and any existing
+   mental break: only the current level is maintained; native thoughts/mental
+   states continue. Check normal caravan food/rest behavior and other needs mods.
+4. Save, fully restart and reload with several toggles on. Verify their state,
+   stack-limit/reset settings, Always Legendary and crafting speed. Check panel
+   scrolling and both column layouts at different UI scales.
+
+Learning, Play, Deathrest, chemical needs and Hemogen are not implemented.

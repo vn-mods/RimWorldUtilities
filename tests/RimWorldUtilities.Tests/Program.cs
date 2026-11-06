@@ -41,6 +41,11 @@ internal static class Program
                 args[0] == "--crafting-on" ? 20 : args[0] == "--crafting-off" ? 3 : 1);
             return;
         }
+        if (args.Length == 2 && (args[0] == "--needs-on" || args[0] == "--needs-off"))
+        {
+            VerifyNeedsRestart(args[1], args[0] == "--needs-on");
+            return;
+        }
 
         ValidateAmounts();
         ValidateEnabling();
@@ -53,15 +58,18 @@ internal static class Program
         ItemPropertiesChecks.RunCore(Check);
         CraftingChecks.RunCore(Check);
         CraftingSpeedChecks.RunCore(Check);
+        ColonistNeedsChecks.RunCore(Check);
         if (!string.IsNullOrEmpty(gameDirectory))
         {
             ItemPropertiesChecks.RunNative(Check);
             CraftingChecks.RunNative(Check);
             CraftingSpeedChecks.RunNative(Check);
+            ColonistNeedsChecks.RunNative(Check);
             ValidatePersistence();
             ValidateSteelMigration();
             ValidateResetPersistence();
             ValidateCraftingPersistence();
+            ValidateNeedsPersistence();
         }
         else
         {
@@ -471,6 +479,7 @@ internal static class Program
             var settings = CustomStackLimitSettingsStore.Read(path);
             Check(!settings.AlwaysLegendaryCrafting, "Legacy Steel settings default crafting to disabled");
             Check(settings.CraftingSpeedMultiplier == 1, "Legacy settings default to normal crafting speed");
+            Check(settings.EnabledColonistNeeds.Count == 0, "Legacy settings default all needs to off");
             var store = new CustomStackLimitSettingsStore(path);
             var steel = Definition("Steel", 75);
             var wood = Definition("WoodLog", 60);
@@ -581,6 +590,61 @@ internal static class Program
         Check(settings.EnabledLimits["Steel"] == 250000 && settings.OriginalLimits["Steel"] == 75,
             "Crafting restart retains raised Steel configuration");
         Console.WriteLine($"Fresh-process crafting settings passed ({checks} assertions).");
+    }
+
+    private static void ValidateNeedsPersistence()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "RimWorldUtilities-needs-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(directory, "settings.xml");
+            var store = new CustomStackLimitSettingsStore(path);
+            var settings = EnabledSettings(250000);
+            settings.AlwaysLegendaryCrafting = true;
+            settings.CraftingSpeedMultiplier = 20;
+            settings.EnabledColonistNeeds.Add("MissingFutureNeed");
+            store.Save(settings);
+            var wood = Definition("WoodLog", 60);
+            var stacks = new CustomStackLimitService(settings, store.Save, _ => { });
+            stacks.Initialize(new[] { Definition("Steel", 75), wood });
+            var needs = new ColonistNeedsService(settings, store.Save, accessiblePawns: () => Array.Empty<Verse.Pawn>());
+            needs.SetAvailability(true);
+            foreach (var id in ColonistNeedsService.BasicNeeds)
+                Check(needs.TrySetEnabled(id, true), "Persist need enable with native Scribe: " + id);
+            Check(CustomStackLimitSettingsStore.Read(path).Matches(settings), "Native needs settings verification");
+            Check(stacks.TryEnable(wood, out _) && stacks.TryScheduleReset(wood, out _), "Stack writes after needs enable");
+            Check(CustomStackLimitSettingsStore.Read(path).EnabledColonistNeeds.SetEquals(settings.EnabledColonistNeeds),
+                "Stack settings/reset writes preserve needs");
+            RunFreshProcess(path, "--needs-on");
+            var crafting = new CraftingService(settings, store.Save);
+            crafting.SetSpeedAvailability(true);
+            Check(crafting.TrySetSpeedMultiplier(5), "Crafting write after needs enable");
+            Check(CustomStackLimitSettingsStore.Read(path).EnabledColonistNeeds.SetEquals(settings.EnabledColonistNeeds),
+                "Crafting writes preserve needs");
+            foreach (var id in ColonistNeedsService.BasicNeeds)
+                Check(needs.TrySetEnabled(id, false), "Persist need disable with native Scribe: " + id);
+            RunFreshProcess(path, "--needs-off");
+            Check(Directory.GetFiles(directory).Length == 1, "Needs writes leave no temporary settings");
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    private static void VerifyNeedsRestart(string path, bool enabled)
+    {
+        var settings = CustomStackLimitSettingsStore.Read(path);
+        var needs = new ColonistNeedsService(settings, _ => throw new Exception("Reads must not save"));
+        foreach (var id in ColonistNeedsService.BasicNeeds)
+            Check(needs.IsEnabled(id) == enabled, "Restore per-need setting: " + id);
+        Check(!needs.IsAvailable && needs.HasEnabledNeeds == enabled, "Preferences do not bypass patch availability");
+        Check(settings.EnabledColonistNeeds.Contains("MissingFutureNeed") && !needs.IsEnabled("MissingFutureNeed"),
+            "Retain unknown saved identifiers without enabling unsupported needs");
+        Check(settings.EnabledLimits["Steel"] == 250000 && settings.OriginalLimits["Steel"] == 75 &&
+            settings.EnabledLimits["WoodLog"] == 100000 && settings.PendingResets.Contains("WoodLog"),
+            "Needs persistence preserves raised limits and pending reset");
+        Check(settings.AlwaysLegendaryCrafting && settings.CraftingSpeedMultiplier == (enabled ? 20 : 5),
+            "Needs persistence preserves independent crafting preferences");
+        Console.WriteLine($"Fresh-process needs settings passed ({checks} assertions).");
     }
 
     private static void RunFreshProcess(string path, string mode = "--restart")

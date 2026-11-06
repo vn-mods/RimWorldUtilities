@@ -10,6 +10,7 @@ public sealed class CustomStackLimitSettings : ModSettings
     public HashSet<string> PendingResets = new();
     public bool AlwaysLegendaryCrafting;
     public int CraftingSpeedMultiplier = 1;
+    public HashSet<string> EnabledColonistNeeds = new();
 
     public override void ExposeData()
     {
@@ -18,9 +19,11 @@ public sealed class CustomStackLimitSettings : ModSettings
         Scribe_Collections.Look(ref PendingResets, "pendingStackLimitResets", LookMode.Value);
         Scribe_Values.Look(ref AlwaysLegendaryCrafting, "alwaysLegendaryCrafting", false);
         Scribe_Values.Look(ref CraftingSpeedMultiplier, "craftingSpeedMultiplier", 1);
+        Scribe_Collections.Look(ref EnabledColonistNeeds, "enabledColonistNeeds", LookMode.Value);
         EnabledLimits ??= new();
         OriginalLimits ??= new();
         PendingResets ??= new();
+        EnabledColonistNeeds ??= new();
     }
 
     internal CustomStackLimitSettings Copy() => new()
@@ -29,7 +32,8 @@ public sealed class CustomStackLimitSettings : ModSettings
         OriginalLimits = new Dictionary<string, int>(OriginalLimits),
         PendingResets = new HashSet<string>(PendingResets),
         AlwaysLegendaryCrafting = AlwaysLegendaryCrafting,
-        CraftingSpeedMultiplier = CraftingSpeedMultiplier
+        CraftingSpeedMultiplier = CraftingSpeedMultiplier,
+        EnabledColonistNeeds = new HashSet<string>(EnabledColonistNeeds)
     };
 
     internal void CopyFrom(CustomStackLimitSettings other)
@@ -39,12 +43,14 @@ public sealed class CustomStackLimitSettings : ModSettings
         PendingResets = new HashSet<string>(other.PendingResets);
         AlwaysLegendaryCrafting = other.AlwaysLegendaryCrafting;
         CraftingSpeedMultiplier = other.CraftingSpeedMultiplier;
+        EnabledColonistNeeds = new HashSet<string>(other.EnabledColonistNeeds);
     }
 
     internal bool Matches(CustomStackLimitSettings other) =>
         Equal(EnabledLimits, other.EnabledLimits) && Equal(OriginalLimits, other.OriginalLimits) &&
         PendingResets.SetEquals(other.PendingResets) && AlwaysLegendaryCrafting == other.AlwaysLegendaryCrafting &&
-        CraftingSpeedMultiplier == other.CraftingSpeedMultiplier;
+        CraftingSpeedMultiplier == other.CraftingSpeedMultiplier &&
+        EnabledColonistNeeds.SetEquals(other.EnabledColonistNeeds);
 
     private static bool Equal(Dictionary<string, int> left, Dictionary<string, int> right)
     {
