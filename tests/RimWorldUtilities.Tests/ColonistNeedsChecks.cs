@@ -49,7 +49,7 @@ internal static class ColonistNeedsChecks
         f.FailWrites = true;
         check(!f.Service.TrySetEnabled("Food", false) && f.Service.IsEnabled("Food"), "Failed disable retains the saved state");
 
-        foreach (var id in new[] { "Learning", "Play", "Hemogen", "Chemical_Alcohol", "MissingModNeed", "food", "" })
+        foreach (var id in new[] { "Hemogen", "Chemical_Alcohol", "MissingModNeed", "food", "" })
             check(!f.Service.TrySetEnabled(id, true), "Reject unsupported need: " + id);
         f = new Fixture();
         f.Settings.EnabledColonistNeeds.Add("MissingModNeed");
@@ -75,6 +75,7 @@ internal static class ColonistNeedsChecks
         check(f.Settings.EnabledColonistNeeds.Contains("MissingModNeed"), "Preserve unknown settings for future compatibility");
 
         ValidateEligibility(check);
+        ValidateSpecial(check);
         f = new Fixture();
         f.Service.SetAvailability(true);
         var a = f.Add("Food", 2f);
@@ -109,7 +110,96 @@ internal static class ColonistNeedsChecks
         check(!copy.Matches(f.Settings) && f.Settings.EnabledColonistNeeds.Count == 2, "Independent copies and verification include needs");
         f.Settings.CopyFrom(copy);
         check(!f.Service.HasEnabledNeeds, "CopyFrom replaces enabled identifiers without stale flags");
-        check(ColonistNeedsPanel.RequiredHeight(600f) < ColonistNeedsPanel.RequiredHeight(350f), "Narrow panel gets single-column height");
+        check(ColonistNeedsPanel.RequiredHeight(600f, false) < ColonistNeedsPanel.RequiredHeight(350f, false),
+            "Narrow basic panel gets single-column height");
+        check(ColonistNeedsPanel.RequiredHeight(600f, true) < ColonistNeedsPanel.RequiredHeight(350f, true),
+            "Narrow special panel gets single-column height");
+        check(ColonistNeedsPanel.RequiredHeight(600f, true) == ColonistNeedsPanel.RequiredHeight(600f, false) + 62f &&
+            ColonistNeedsPanel.RequiredHeight(350f, true) == ColonistNeedsPanel.RequiredHeight(350f, false) + 92f,
+            "Reserve Special heading, gap and checkbox rows only with Biotech");
+    }
+
+    private static void ValidateSpecial(Action<bool, string> check)
+    {
+        check(ColonistNeedsService.SpecialNeeds.SequenceEqual(new[] { "Learning", "Play" }), "Only Learning and Play added");
+        foreach (var id in ColonistNeedsService.SpecialNeeds)
+        {
+            var f = new Fixture();
+            check(!f.Service.IsEnabled(id) && !f.Service.HasEnabledNeeds, "Special default off: " + id);
+            check(!f.Service.TrySetEnabled(id, true), "Special respects patch availability: " + id);
+            f.Service.SetAvailability(true);
+            var need = f.Add(id, 1.7f);
+            check(f.Service.TrySetEnabled(id, true) && f.Service.HasEnabledNeeds, "Special-only configuration activates hook: " + id);
+            check(!f.EnabledDuringWrite && need.CurLevel == 1.7f && f.Durable!.EnabledColonistNeeds.Contains(id),
+                "Save before immediate Special refill using actual maximum: " + id);
+            need.Maximum = 0.8f;
+            need.CurLevel = 0.2f;
+            f.Service.Refill(f.Pawn);
+            check(need.CurLevel == 0.8f, "Periodic Special refill re-reads maximum: " + id);
+            f.Pawn.needs.AllNeeds.Remove(need);
+            need.CurLevel = 0.1f;
+            var replacement = f.Add(id, 1.3f);
+            f.Service.Refill(f.Pawn);
+            check(need.CurLevel == 0.1f && replacement.CurLevel == 1.3f, "Special needs are never cached: " + id);
+            check(f.Service.TrySetEnabled(id, false) && replacement.CurLevel == 1.3f, "Disable does not reverse Special value: " + id);
+            replacement.CurLevel = 0.2f;
+            f.Service.Refill(f.Pawn);
+            check(!f.Service.HasEnabledNeeds && replacement.CurLevel == 0.2f, "Special disable immediately stops refill: " + id);
+            f.FailWrites = true;
+            check(!f.Service.TrySetEnabled(id, true) && !f.Service.IsEnabled(id) && replacement.CurLevel == 0.2f,
+                "Failed Special save cannot enable or refill: " + id);
+        }
+
+        var independent = new Fixture();
+        independent.Service.SetAvailability(true);
+        var learning = independent.Add("Learning", 1f);
+        var play = independent.Add("Play", 1f);
+        var food = independent.Add("Food", 2f);
+        independent.Service.TrySetEnabled("Learning", true);
+        check(learning.CurLevel == 1f && play.CurLevel == 0f && food.CurLevel == 0f, "Learning enable is independent");
+        independent.Service.TrySetEnabled("Play", true);
+        independent.Service.TrySetEnabled("Food", true);
+        independent.Service.TrySetEnabled("Learning", false);
+        learning.CurLevel = play.CurLevel = food.CurLevel = 0.2f;
+        independent.Service.Refill(independent.Pawn);
+        check(learning.CurLevel == 0.2f && play.CurLevel == 1f && food.CurLevel == 2f, "Play and Basic remain on after Learning off");
+        var copy = independent.Settings.Copy();
+        check(copy.Matches(independent.Settings) && copy.EnabledColonistNeeds.SetEquals(new[] { "Play", "Food" }),
+            "Existing copy and verification include Special identifiers");
+
+        // Fixture lists model the needs provided by vanilla's developmental-stage filter.
+        // The service must never add an adult need or the other juvenile stage's need.
+        foreach (var (age, present) in new[] { (0, "Play"), (5, "Learning"), (25, "") })
+        {
+            var f = new Fixture();
+            f.SetAge(age);
+            f.Service.SetAvailability(true);
+            if (present.Length > 0) f.Add(present, 1f);
+            foreach (var id in ColonistNeedsService.SpecialNeeds) f.Service.TrySetEnabled(id, true);
+            f.Service.Refill(f.Pawn);
+            check(f.Pawn.needs.AllNeeds.Count == (present.Length > 0 ? 1 : 0) &&
+                f.Pawn.needs.AllNeeds.All(n => n.def.defName == present && n.CurLevel == n.MaxLevel),
+                "Missing/non-applicable stage needs remain absent at age " + age);
+        }
+
+        var noDlc = new Fixture { Biotech = false };
+        noDlc.Service.SetAvailability(true);
+        foreach (var id in ColonistNeedsService.SpecialNeeds)
+        {
+            check(!noDlc.Service.TrySetEnabled(id, true), "Cannot enable without Biotech: " + id);
+            noDlc.Settings.EnabledColonistNeeds.Add(id); // Saved preferences from a Biotech session.
+            noDlc.Add(id, 1f);
+        }
+        check(!noDlc.Service.SpecialNeedsAvailable && !noDlc.Service.HasEnabledNeeds && !noDlc.Service.Refill(noDlc.Pawn),
+            "Saved Special preferences cannot refill without DLC");
+        noDlc.Service.TrySetEnabled("Food", true);
+        noDlc.Add("Food", 2f);
+        noDlc.Service.Refill(noDlc.Pawn);
+        check(noDlc.Pawn.needs.AllNeeds.Take(2).All(n => n.CurLevel == 0f) && noDlc.Pawn.needs.AllNeeds[2].CurLevel == 2f,
+            "Basic refill remains functional without Biotech; Special stays untouched");
+        check(noDlc.Durable!.EnabledColonistNeeds.IsSupersetOf(ColonistNeedsService.SpecialNeeds),
+            "Saving Basic preferences preserves unavailable Special preferences");
+        check(noDlc.Service.TrySetEnabled("Play", false) && !noDlc.Service.IsEnabled("Play"), "Unavailable preference can still be disabled");
     }
 
     private static void ValidateEligibility(Action<bool, string> check)
@@ -147,6 +237,15 @@ internal static class ColonistNeedsChecks
             need.CurLevel = 0.2f;
             f.Service.Refill(f.Pawn);
             check(need.CurLevel == (test.Eligible ? 1f : 0.2f), "Interval eligibility: " + test.Name);
+            foreach (var id in ColonistNeedsService.SpecialNeeds)
+            {
+                var special = f.Add(id, 1.2f);
+                f.Service.TrySetEnabled(id, true);
+                check(special.CurLevel == (test.Eligible ? 1.2f : 0f), "Special immediate eligibility: " + id + "/" + test.Name);
+                special.CurLevel = 0.1f;
+                f.Service.Refill(f.Pawn);
+                check(special.CurLevel == (test.Eligible ? 1.2f : 0.1f), "Special interval eligibility: " + id + "/" + test.Name);
+            }
         }
         Current.Game.questManager.ExtraFactionQuestParts.Clear();
     }
@@ -215,6 +314,77 @@ internal static class ColonistNeedsChecks
         Set(stale, typeof(Pawn_NeedsTracker), "needs", new List<Need> { old });
         stale.NeedsTrackerTickInterval(1);
         check(old.CurLevel == 0f && old.Intervals == 1, "Do not refill a detached tracker");
+        ValidateSpecialNative(f, check);
+    }
+
+    private static int growthCalculations;
+    private static bool FixedGrowthRate(ref float __result)
+    {
+        growthCalculations++;
+        __result = 8f;
+        return false;
+    }
+
+    private static void ValidateSpecialNative(Fixture f, Action<bool, string> check)
+    {
+        f.Service.TrySetEnabled("Food", false);
+        f.Pawn.needs.AllNeeds.Clear();
+        f.SetAge(5);
+        f.Pawn.ageTracker.canGainGrowthPoints = true;
+        f.Pawn.ageTracker.growthPoints = 11f;
+        var learning = Empty<TestLearning>();
+        learning.def = Empty<NeedDef>();
+        learning.def.defName = "Learning";
+        Set(learning, typeof(Need), "pawn", f.Pawn);
+        f.Pawn.needs.AllNeeds.Add(learning);
+        var play = Empty<TestPlay>();
+        play.def = Empty<NeedDef>();
+        play.def.defName = "Play";
+        f.Pawn.needs.AllNeeds.Add(play);
+
+        // Keep the real Need_Learning growth increment. Only its rate provider is
+        // isolated from profile/stat/definition initialization in this test process.
+        var harmony = new Harmony("slava.rimworldutilities.tests.learning-growth");
+        var rate = typeof(Pawn_AgeTracker).GetProperty(nameof(Pawn_AgeTracker.GrowthPointsPerDay))!.GetMethod!;
+        harmony.Patch(rate, prefix: new HarmonyMethod(typeof(ColonistNeedsChecks), nameof(FixedGrowthRate)));
+        try
+        {
+            growthCalculations = 0;
+            f.SetIntervalPhase(0);
+            learning.CurLevel = play.CurLevel = 0.3f;
+            f.Pawn.needs.NeedsTrackerTickInterval(1);
+            check(learning.Intervals == 1 && play.Intervals == 1 && learning.CurLevel < 0.3f && play.CurLevel < 0.3f,
+                "Disabled Special needs execute real native intervals and decay");
+            check(Math.Abs(f.Pawn.ageTracker.growthPoints - 11.02f) < 0.00001f && growthCalculations == 1,
+                "Native Learning alone awards growth points once while disabled");
+
+            f.Service.TrySetEnabled("Learning", true);
+            check(learning.CurLevel == learning.MaxLevel && play.CurLevel < 0.3f, "Immediate Learning enable without Play change");
+            learning.CurLevel = 0.1f;
+            var growth = f.Pawn.ageTracker.growthPoints;
+            f.Pawn.needs.NeedsTrackerTickInterval(1);
+            check(learning.Intervals == 2 && learning.BeforeNative == learning.MaxLevel && learning.CurLevel == learning.MaxLevel &&
+                play.Intervals == 2 && play.CurLevel < 0.3f, "Special-only prefix/postfix preserves both native interval calls");
+            check(Math.Abs(f.Pawn.ageTracker.growthPoints - growth - 0.02f) < 0.00001f && growthCalculations == 2,
+                "Enabling Learning preserves the native growth calculation exactly once");
+
+            f.Service.TrySetEnabled("Play", true);
+            check(play.CurLevel == play.MaxLevel, "Immediate native Play refill");
+            f.Service.TrySetEnabled("Learning", false);
+            learning.CurLevel = play.CurLevel = 0.2f;
+            f.Pawn.needs.NeedsTrackerTickInterval(1);
+            check(learning.Intervals == 3 && play.Intervals == 3 && learning.CurLevel < 0.2f &&
+                play.BeforeNative == play.MaxLevel && play.CurLevel == play.MaxLevel, "Play stays full while Learning resumes native decay");
+            f.SetIntervalPhase(1);
+            play.CurLevel = 0.2f;
+            f.Pawn.needs.NeedsTrackerTickInterval(1);
+            check(play.Intervals == 3 && play.CurLevel == 0.2f && growthCalculations == 3, "No Special work outside native hash gate");
+            f.SetIntervalPhase(0);
+            f.Service.TrySetEnabled("Play", false);
+            f.Pawn.needs.NeedsTrackerTickInterval(1);
+            check(play.Intervals == 4 && play.CurLevel < 0.2f && growthCalculations == 4, "Disable Play immediately leaves native updates intact");
+        }
+        finally { harmony.Unpatch(rate, HarmonyPatchType.Prefix, harmony.Id); }
     }
 
     internal sealed class Fixture
@@ -228,6 +398,7 @@ internal static class ColonistNeedsChecks
         public bool FailWrites;
         public bool EnabledDuringWrite;
         public int Enumerations;
+        public bool Biotech = true;
 
         public Fixture()
         {
@@ -250,7 +421,7 @@ internal static class ColonistNeedsChecks
                 if (FailWrites) throw new IOException("Simulated needs persistence failure");
                 EnabledDuringWrite = Settings.EnabledColonistNeeds.Count > 0;
                 Durable = candidate.Copy();
-            }, () => Player, () => { Enumerations++; return Pawns; });
+            }, () => Player, () => { Enumerations++; return Pawns; }, () => Biotech);
         }
         public TestNeed Add(string id, float maximum)
         {
@@ -319,6 +490,22 @@ internal static class ColonistNeedsChecks
             CurLevel -= 0.25f;
             DuringInterval?.Invoke();
         }
+    }
+    private sealed class TestLearning : Need_Learning
+    {
+        public int Intervals;
+        public float BeforeNative;
+        private TestLearning(Pawn pawn) : base(pawn) { }
+        protected override bool IsFrozen => false;
+        public override void NeedInterval() { Intervals++; BeforeNative = CurLevel; base.NeedInterval(); }
+    }
+    private sealed class TestPlay : Need_Play
+    {
+        public int Intervals;
+        public float BeforeNative;
+        private TestPlay(Pawn pawn) : base(pawn) { }
+        protected override bool IsFrozen => false;
+        public override void NeedInterval() { Intervals++; BeforeNative = CurLevel; base.NeedInterval(); }
     }
     private sealed class Scope : IDisposable
     {

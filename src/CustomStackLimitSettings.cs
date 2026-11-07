@@ -10,6 +10,8 @@ public sealed class CustomStackLimitSettings : ModSettings
     public HashSet<string> PendingResets = new();
     public bool AlwaysLegendaryCrafting;
     public int CraftingSpeedMultiplier = 1;
+    public int BuildingSpeedMultiplier = 1;
+    public int ResearchSpeedMultiplier = 1;
     public HashSet<string> EnabledColonistNeeds = new();
 
     public override void ExposeData()
@@ -19,6 +21,8 @@ public sealed class CustomStackLimitSettings : ModSettings
         Scribe_Collections.Look(ref PendingResets, "pendingStackLimitResets", LookMode.Value);
         Scribe_Values.Look(ref AlwaysLegendaryCrafting, "alwaysLegendaryCrafting", false);
         Scribe_Values.Look(ref CraftingSpeedMultiplier, "craftingSpeedMultiplier", 1);
+        Scribe_Values.Look(ref BuildingSpeedMultiplier, "buildingSpeedMultiplier", 1);
+        Scribe_Values.Look(ref ResearchSpeedMultiplier, "researchSpeedMultiplier", 1);
         Scribe_Collections.Look(ref EnabledColonistNeeds, "enabledColonistNeeds", LookMode.Value);
         EnabledLimits ??= new();
         OriginalLimits ??= new();
@@ -33,6 +37,8 @@ public sealed class CustomStackLimitSettings : ModSettings
         PendingResets = new HashSet<string>(PendingResets),
         AlwaysLegendaryCrafting = AlwaysLegendaryCrafting,
         CraftingSpeedMultiplier = CraftingSpeedMultiplier,
+        BuildingSpeedMultiplier = BuildingSpeedMultiplier,
+        ResearchSpeedMultiplier = ResearchSpeedMultiplier,
         EnabledColonistNeeds = new HashSet<string>(EnabledColonistNeeds)
     };
 
@@ -43,13 +49,16 @@ public sealed class CustomStackLimitSettings : ModSettings
         PendingResets = new HashSet<string>(other.PendingResets);
         AlwaysLegendaryCrafting = other.AlwaysLegendaryCrafting;
         CraftingSpeedMultiplier = other.CraftingSpeedMultiplier;
+        BuildingSpeedMultiplier = other.BuildingSpeedMultiplier;
+        ResearchSpeedMultiplier = other.ResearchSpeedMultiplier;
         EnabledColonistNeeds = new HashSet<string>(other.EnabledColonistNeeds);
     }
 
     internal bool Matches(CustomStackLimitSettings other) =>
         Equal(EnabledLimits, other.EnabledLimits) && Equal(OriginalLimits, other.OriginalLimits) &&
         PendingResets.SetEquals(other.PendingResets) && AlwaysLegendaryCrafting == other.AlwaysLegendaryCrafting &&
-        CraftingSpeedMultiplier == other.CraftingSpeedMultiplier &&
+        CraftingSpeedMultiplier == other.CraftingSpeedMultiplier && BuildingSpeedMultiplier == other.BuildingSpeedMultiplier &&
+        ResearchSpeedMultiplier == other.ResearchSpeedMultiplier &&
         EnabledColonistNeeds.SetEquals(other.EnabledColonistNeeds);
 
     private static bool Equal(Dictionary<string, int> left, Dictionary<string, int> right)

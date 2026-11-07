@@ -14,6 +14,7 @@ public sealed class RimWorldUtilitiesMod : Mod
     internal CustomStackLimitService StackLimits { get; }
     internal CraftingService Crafting { get; }
     internal ColonistNeedsService ColonistNeeds { get; }
+    internal ResearchSpeedService Research { get; }
 
     public RimWorldUtilitiesMod(ModContentPack content)
         : base(content)
@@ -25,11 +26,14 @@ public sealed class RimWorldUtilitiesMod : Mod
         settingsStore = new CustomStackLimitSettingsStore(Path.Combine(GenFilePaths.ConfigFolderPath, filename));
         StackLimits = new CustomStackLimitService(settings, settingsStore.Save, RefreshMergeables);
         Crafting = new CraftingService(settings, settingsStore.Save);
+        Research = new ResearchSpeedService(settings, settingsStore.Save, Crafting.IsEligibleWorker);
         ColonistNeeds = new ColonistNeedsService(settings, settingsStore.Save);
         Instance = this;
         LegendaryCraftingPatch.Install(Crafting);
         LegendaryConstructionPatch.Install(Crafting);
         CraftingSpeedPatch.Install(Crafting);
+        BuildingSpeedPatch.Install(Crafting);
+        ResearchSpeedPatch.Install(Research);
         ColonistNeedsPatch.Install(ColonistNeeds);
         Log.Message("[RimWorldUtilities] Mod loaded successfully!");
     }

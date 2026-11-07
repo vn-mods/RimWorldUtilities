@@ -41,9 +41,19 @@ internal static class Program
                 args[0] == "--crafting-on" ? 20 : args[0] == "--crafting-off" ? 3 : 1);
             return;
         }
-        if (args.Length == 2 && (args[0] == "--needs-on" || args[0] == "--needs-off"))
+        if (args.Length == 2 && args[0] is "--needs-on" or "--needs-off" or "--needs-basic" or "--needs-learning" or "--needs-play")
         {
-            VerifyNeedsRestart(args[1], args[0] == "--needs-on");
+            VerifyNeedsRestart(args[1], args[0]);
+            return;
+        }
+        if (args.Length == 2 && args[0].StartsWith("--building-", StringComparison.Ordinal))
+        {
+            VerifyBuildingRestart(args[1], int.Parse(args[0]["--building-".Length..], CultureInfo.InvariantCulture));
+            return;
+        }
+        if (args.Length == 2 && args[0].StartsWith("--research-", StringComparison.Ordinal))
+        {
+            VerifyResearchRestart(args[1], int.Parse(args[0]["--research-".Length..], CultureInfo.InvariantCulture));
             return;
         }
 
@@ -59,6 +69,8 @@ internal static class Program
         CraftingChecks.RunCore(Check);
         ConstructionQualityChecks.RunCore(Check);
         CraftingSpeedChecks.RunCore(Check);
+        BuildingSpeedChecks.RunCore(Check);
+        ResearchSpeedChecks.RunCore(Check);
         ColonistNeedsChecks.RunCore(Check);
         if (!string.IsNullOrEmpty(gameDirectory))
         {
@@ -66,11 +78,15 @@ internal static class Program
             CraftingChecks.RunNative(Check);
             ConstructionQualityChecks.RunNative(Check);
             CraftingSpeedChecks.RunNative(Check);
+            BuildingSpeedChecks.RunNative(Check);
+            ResearchSpeedChecks.RunNative(Check);
             ColonistNeedsChecks.RunNative(Check);
             ValidatePersistence();
             ValidateSteelMigration();
             ValidateResetPersistence();
             ValidateCraftingPersistence();
+            ValidateBuildingPersistence();
+            ValidateResearchPersistence();
             ValidateNeedsPersistence();
         }
         else
@@ -481,6 +497,8 @@ internal static class Program
             var settings = CustomStackLimitSettingsStore.Read(path);
             Check(!settings.AlwaysLegendaryCrafting, "Legacy Steel settings default crafting to disabled");
             Check(settings.CraftingSpeedMultiplier == 1, "Legacy settings default to normal crafting speed");
+            Check(settings.BuildingSpeedMultiplier == 1, "Legacy settings default to normal building speed");
+            Check(settings.ResearchSpeedMultiplier == 1, "Legacy settings default to normal research speed");
             Check(settings.EnabledColonistNeeds.Count == 0, "Legacy settings default all needs to off");
             var store = new CustomStackLimitSettingsStore(path);
             var steel = Definition("Steel", 75);
@@ -594,6 +612,118 @@ internal static class Program
         Console.WriteLine($"Fresh-process crafting settings passed ({checks} assertions).");
     }
 
+    private static void ValidateBuildingPersistence()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "RimWorldUtilities-building-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(directory, "settings.xml");
+            var store = new CustomStackLimitSettingsStore(path);
+            var settings = EnabledSettings(250000);
+            var wood = Definition("WoodLog", 60);
+            var stacks = new CustomStackLimitService(settings, store.Save, _ => { });
+            stacks.Initialize(new[] { Definition("Steel", 75), wood });
+            Check(stacks.TryEnable(wood, out _) && stacks.TryScheduleReset(wood, out _), "Building fixture retains stack reset");
+            var service = new CraftingService(settings, store.Save);
+            service.SetConstructionAvailability(true);
+            service.SetSpeedAvailability(true);
+            service.SetBuildingSpeedAvailability(true);
+            service.TrySetAlwaysLegendary(true);
+            service.TrySetSpeedMultiplier(3);
+            var needs = new ColonistNeedsService(settings, store.Save, accessiblePawns: () => Array.Empty<Pawn>(), biotechActive: () => true);
+            needs.SetAvailability(true);
+            foreach (var id in new[] { "Food", "Learning", "Play" }) needs.TrySetEnabled(id, true);
+            foreach (var multiplier in CraftingService.SpeedMultipliers)
+            {
+                Check(service.TrySetBuildingSpeedMultiplier(multiplier), "Persist building speed using Scribe: " + multiplier);
+                Check(CustomStackLimitSettingsStore.Read(path).Matches(settings), "Read-back verifies building and all other settings");
+                RunFreshProcess(path, "--building-" + multiplier);
+            }
+            // Every shared-settings writer must retain the final building preference.
+            Check(needs.TrySetEnabled("Rest", true) && needs.TrySetEnabled("Rest", false), "Needs writes after building speed");
+            Check(stacks.TryCancelReset(wood, out _) && stacks.TryScheduleReset(wood, out _), "Stack writes after building speed");
+            Check(service.TrySetSpeedMultiplier(5) && service.TrySetSpeedMultiplier(3), "Crafting writes after building speed");
+            RunFreshProcess(path, "--building-20");
+            Check(Directory.GetFiles(directory).Length == 1, "Building persistence leaves no temporary settings");
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    private static void VerifyBuildingRestart(string path, int expected)
+    {
+        var settings = CustomStackLimitSettingsStore.Read(path);
+        var service = new CraftingService(settings, _ => throw new Exception("Reading must not save"));
+        Check(service.BuildingSpeedMultiplier == expected && !service.IsBuildingSpeedAvailable, "Restore independent building preference");
+        service.SetBuildingSpeedAvailability(true);
+        Check(service.BuildingSpeedMultiplier == expected && service.IsBuildingSpeedAvailable, "Availability preserves building preference");
+        Check(service.AlwaysLegendary && service.SpeedMultiplier == 3, "Building restart retains quality and crafting speed");
+        Check(settings.EnabledColonistNeeds.SetEquals(new[] { "Food", "Learning", "Play" }), "Building restart retains Basic and Special needs");
+        Check(settings.EnabledLimits["Steel"] == 250000 && settings.OriginalLimits["Steel"] == 75 &&
+            settings.EnabledLimits["WoodLog"] == 100000 && settings.PendingResets.SetEquals(new[] { "WoodLog" }),
+            "Building restart retains Item Editor settings");
+        Console.WriteLine($"Fresh-process building settings passed ({checks} assertions).");
+    }
+
+    private static void ValidateResearchPersistence()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "RimWorldUtilities-research-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(directory, "settings.xml");
+            var store = new CustomStackLimitSettingsStore(path);
+            var settings = EnabledSettings(250000);
+            settings.EnabledColonistNeeds.Add("FutureNeed");
+            var wood = Definition("WoodLog", 60);
+            var stacks = new CustomStackLimitService(settings, store.Save, _ => { });
+            stacks.Initialize(new[] { Definition("Steel", 75), wood });
+            Check(stacks.TryEnable(wood, out _) && stacks.TryScheduleReset(wood, out _), "Research fixture retains stack reset");
+            var crafting = new CraftingService(settings, store.Save);
+            crafting.SetAvailability(true);
+            crafting.SetSpeedAvailability(true);
+            crafting.SetBuildingSpeedAvailability(true);
+            crafting.TrySetAlwaysLegendary(true);
+            crafting.TrySetSpeedMultiplier(3);
+            crafting.TrySetBuildingSpeedMultiplier(5);
+            var needs = new ColonistNeedsService(settings, store.Save, accessiblePawns: () => Array.Empty<Pawn>(), biotechActive: () => true);
+            needs.SetAvailability(true);
+            foreach (var id in new[] { "Food", "Learning", "Play" }) needs.TrySetEnabled(id, true);
+            var research = new ResearchSpeedService(settings, store.Save, crafting.IsEligibleWorker);
+            research.SetAvailability(true);
+            foreach (var multiplier in ResearchSpeedService.SpeedMultipliers)
+            {
+                Check(research.TrySetSpeedMultiplier(multiplier), "Persist research speed with Scribe: " + multiplier);
+                Check(CustomStackLimitSettingsStore.Read(path).Matches(settings), "Research read-back retains all settings");
+                RunFreshProcess(path, "--research-" + multiplier);
+            }
+            Check(needs.TrySetEnabled("Rest", true) && needs.TrySetEnabled("Rest", false), "Needs writes preserve research preference");
+            Check(stacks.TryCancelReset(wood, out _) && stacks.TryScheduleReset(wood, out _), "Stack writes preserve research preference");
+            Check(crafting.TrySetSpeedMultiplier(2) && crafting.TrySetSpeedMultiplier(3) &&
+                crafting.TrySetBuildingSpeedMultiplier(10) && crafting.TrySetBuildingSpeedMultiplier(5), "Craft/Build writes preserve research preference");
+            RunFreshProcess(path, "--research-20");
+            Check(Directory.GetFiles(directory).Length == 1, "Research settings leave no temporary files");
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    private static void VerifyResearchRestart(string path, int expected)
+    {
+        var settings = CustomStackLimitSettingsStore.Read(path);
+        var crafting = new CraftingService(settings, _ => throw new Exception("Reading must not save"));
+        var research = new ResearchSpeedService(settings, _ => throw new Exception("Reading must not save"), crafting.IsEligibleWorker);
+        Check(research.SpeedMultiplier == expected && !research.IsAvailable, "Restore independent research preference");
+        research.SetAvailability(true);
+        Check(research.SpeedMultiplier == expected && research.IsAvailable, "Availability retains research preference");
+        Check(crafting.AlwaysLegendary && crafting.SpeedMultiplier == 3 && crafting.BuildingSpeedMultiplier == 5,
+            "Research restart retains Craft/Build settings");
+        Check(settings.EnabledColonistNeeds.SetEquals(new[] { "Food", "Learning", "Play", "FutureNeed" }), "Research restart retains Basic/Special/future need keys");
+        Check(settings.EnabledLimits["Steel"] == 250000 && settings.OriginalLimits["Steel"] == 75 &&
+            settings.EnabledLimits["WoodLog"] == 100000 && settings.PendingResets.SetEquals(new[] { "WoodLog" }),
+            "Research restart retains Item Editor settings");
+        Console.WriteLine($"Fresh-process research settings passed ({checks} assertions).");
+    }
+
     private static void ValidateNeedsPersistence()
     {
         var directory = Path.Combine(Path.GetTempPath(), "RimWorldUtilities-needs-" + Guid.NewGuid().ToString("N"));
@@ -610,12 +740,19 @@ internal static class Program
             var wood = Definition("WoodLog", 60);
             var stacks = new CustomStackLimitService(settings, store.Save, _ => { });
             stacks.Initialize(new[] { Definition("Steel", 75), wood });
-            var needs = new ColonistNeedsService(settings, store.Save, accessiblePawns: () => Array.Empty<Verse.Pawn>());
+            var needs = new ColonistNeedsService(settings, store.Save, accessiblePawns: () => Array.Empty<Verse.Pawn>(),
+                biotechActive: () => true);
             needs.SetAvailability(true);
             foreach (var id in ColonistNeedsService.BasicNeeds)
                 Check(needs.TrySetEnabled(id, true), "Persist need enable with native Scribe: " + id);
-            Check(CustomStackLimitSettingsStore.Read(path).Matches(settings), "Native needs settings verification");
+            // Existing Basic-only settings must retain their values and default Special off.
+            // Wood/reset setup below is also expected by the restart verifier.
             Check(stacks.TryEnable(wood, out _) && stacks.TryScheduleReset(wood, out _), "Stack writes after needs enable");
+            RunFreshProcess(path, "--needs-basic");
+            foreach (var id in ColonistNeedsService.SpecialNeeds)
+                Check(needs.TrySetEnabled(id, true), "Persist Special enable with native Scribe: " + id);
+            Check(CustomStackLimitSettingsStore.Read(path).Matches(settings), "Native needs settings verification");
+            Check(stacks.TryCancelReset(wood, out _) && stacks.TryScheduleReset(wood, out _), "Stack writes after Special enable");
             Check(CustomStackLimitSettingsStore.Read(path).EnabledColonistNeeds.SetEquals(settings.EnabledColonistNeeds),
                 "Stack settings/reset writes preserve needs");
             RunFreshProcess(path, "--needs-on");
@@ -624,27 +761,36 @@ internal static class Program
             Check(crafting.TrySetSpeedMultiplier(5), "Crafting write after needs enable");
             Check(CustomStackLimitSettingsStore.Read(path).EnabledColonistNeeds.SetEquals(settings.EnabledColonistNeeds),
                 "Crafting writes preserve needs");
-            foreach (var id in ColonistNeedsService.BasicNeeds)
+            foreach (var id in ColonistNeedsService.BasicNeeds.Concat(ColonistNeedsService.SpecialNeeds))
                 Check(needs.TrySetEnabled(id, false), "Persist need disable with native Scribe: " + id);
             RunFreshProcess(path, "--needs-off");
+            foreach (var id in ColonistNeedsService.SpecialNeeds)
+            {
+                Check(needs.TrySetEnabled(id, true), "Persist independent Special enable: " + id);
+                RunFreshProcess(path, id == "Learning" ? "--needs-learning" : "--needs-play");
+                Check(needs.TrySetEnabled(id, false), "Persist independent Special disable: " + id);
+            }
             Check(Directory.GetFiles(directory).Length == 1, "Needs writes leave no temporary settings");
         }
         finally { Directory.Delete(directory, recursive: true); }
     }
 
-    private static void VerifyNeedsRestart(string path, bool enabled)
+    private static void VerifyNeedsRestart(string path, string mode)
     {
         var settings = CustomStackLimitSettingsStore.Read(path);
-        var needs = new ColonistNeedsService(settings, _ => throw new Exception("Reads must not save"));
+        var needs = new ColonistNeedsService(settings, _ => throw new Exception("Reads must not save"), biotechActive: () => true);
         foreach (var id in ColonistNeedsService.BasicNeeds)
-            Check(needs.IsEnabled(id) == enabled, "Restore per-need setting: " + id);
-        Check(!needs.IsAvailable && needs.HasEnabledNeeds == enabled, "Preferences do not bypass patch availability");
+            Check(needs.IsEnabled(id) == (mode is "--needs-on" or "--needs-basic"), "Restore per-need setting: " + id);
+        foreach (var id in ColonistNeedsService.SpecialNeeds)
+            Check(needs.IsEnabled(id) == (mode == "--needs-on" || mode == "--needs-" + id.ToLowerInvariant()),
+                "Restore independent Special setting: " + id);
+        Check(!needs.IsAvailable && needs.HasEnabledNeeds == (mode != "--needs-off"), "Preferences do not bypass patch availability");
         Check(settings.EnabledColonistNeeds.Contains("MissingFutureNeed") && !needs.IsEnabled("MissingFutureNeed"),
             "Retain unknown saved identifiers without enabling unsupported needs");
         Check(settings.EnabledLimits["Steel"] == 250000 && settings.OriginalLimits["Steel"] == 75 &&
             settings.EnabledLimits["WoodLog"] == 100000 && settings.PendingResets.Contains("WoodLog"),
             "Needs persistence preserves raised limits and pending reset");
-        Check(settings.AlwaysLegendaryCrafting && settings.CraftingSpeedMultiplier == (enabled ? 20 : 5),
+        Check(settings.AlwaysLegendaryCrafting && settings.CraftingSpeedMultiplier == (mode is "--needs-on" or "--needs-basic" ? 20 : 5),
             "Needs persistence preserves independent crafting preferences");
         Console.WriteLine($"Fresh-process needs settings passed ({checks} assertions).");
     }

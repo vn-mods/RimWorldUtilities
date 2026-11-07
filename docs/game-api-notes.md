@@ -1022,6 +1022,238 @@ Manual checks after user deployment:
    Test other work/recipe mods. A matcher failure should yield one warning and an
    unavailable speed control while Legendary remains usable.
 
+### Building Speed Multiplier: normal Frame construction (1.7.4998b)
+
+`CustomStackLimitSettings.BuildingSpeedMultiplier` is serialized under
+`buildingSpeedMultiplier`, default 1. It supports the same 1/2/3/5/10/20 choices
+as crafting speed, with independent availability and preference. Invalid saved
+values resolve to 1; unsupported setter values are rejected. Copy, CopyFrom and
+Matches include the new field. The existing atomic candidate-save/read-back
+mechanism preserves all Item Editor, crafting and Basic/Special Needs settings.
+The visible `CraftingPanel` title is now **Craft / Build** with Always Legendary
+and separately labelled Crafting Speed/Building Speed dropdowns. The enclosing
+window reserves enough height for all three controls and their compact error
+status; its existing scroll and rendering-state guards remain in use.
+
+#### Native work and botch model
+
+`RimWorld.WorkGiver_ConstructFinishFrames.JobOnThing(Pawn, Thing, bool)` returns
+`JobDefOf.FinishFrame` for eligible, material-ready Frames. Its driver is
+`RimWorld.JobDriver_ConstructFinishFrame`. The driver's protected
+`IEnumerable<Toil> MakeNewToils()` creates a toil with an `Action<int>` assigned
+to `Verse.AI.Toil.tickIntervalAction`.
+Sources: `refs/decompiled/Assembly-CSharp/RimWorld/WorkGiver_ConstructFinishFrames.cs`,
+`refs/decompiled/Assembly-CSharp/RimWorld/JobDriver_ConstructFinishFrame.cs`, and
+the game's `Data/Core/Defs/JobDefs/Jobs_Work.xml`.
+
+The callback gets the actual worker from `build.actor` and its Frame from the
+driver's current target A. It awards conditional Construction XP at
+`0.25 * delta`, then computes `ConstructionSpeed * 1.7 * delta`, multiplied by
+the Frame Stuff's `ConstructionSpeedFactor` when present. This same work amount
+feeds both `1 - Mathf.Pow(ConstructSuccessChance, work / frame.WorkToBuild)` and
+`frame.workDone += work`. Scaling only the latter would artificially improve
+success per work performed. Our helper scales the common amount after material
+modifiers, before retrieving WorkToBuild and before the failure roll.
+
+The native ConstructSuccessChance stat, tutorial bypass, RNG call, failure path,
+terrain snow/sand clearing, progress addition, completion branch and
+`Frame.CompleteConstruction(Pawn)` call remain unchanged. XP rate and real delta
+are unchanged; faster completion means less total XP per building. Larger work
+steps can overshoot remaining work, as native construction already allows, so
+exact RNG sequences/project-level botch probabilities are not invariant under
+speed changes. The native work-based probability model is preserved.
+
+`RimWorld.Frame.workDone` is saved by `Frame.ExposeData()` under `workDone`.
+Changing the multiplier never rescales existing progress or WorkToBuild.
+`Frame.CompleteConstruction(Pawn worker)` retains material destruction, building
+or terrain creation, quality/art/notification handling, records and spawning.
+Sources: `refs/decompiled/Assembly-CSharp/RimWorld/Frame.cs` and the driver above.
+
+#### Patch and scope
+
+`BuildingSpeedPatch` uses the installed Harmony 3
+`AccessTools.EnumeratorMoveNext(MethodBase)` to resolve MakeNewToils' iterator.
+It reuses the existing exact-one interval-delegate assignment resolver on that
+MoveNext method's original IL. No generated type/method names are hardcoded and
+no Toil or game definition is instantiated. Owner ID:
+`slava.rimworldutilities.building.speed`. The resolved `void(int)` callback is
+the only target, registered once in the mod constructor.
+
+The transpiler verifies one WorkToBuild getter, one Pow call, one workDone store
+and one CompleteConstruction call. It checks the full native rate/material
+block and its null-Stuff branch joining immediately before WorkToBuild. It
+derives the work/total locals and actor/Frame loads from native uses, verifies
+the work local feeds both the probability fraction and progress addition, and
+rejects additional writes or an existing helper. It injects one
+`work = ScaleWork(work, actor, frame)` at that common join. Branch labels and
+exception begin markers move to the inserted first load; end markers and all
+other metadata stay with the original instructions. Incompatible input is
+returned entirely unchanged, with a single warning and only Building Speed
+marked unavailable. Already emitted helpers also honor unavailable state.
+
+`CraftingService.IsEligibleBuildingProgress(Pawn, Frame)` reuses crafting's
+worker policy: non-destroyed, non-null player faction, not a prisoner. Player
+slaves and player-faction mechanoids are included. The Frame must be spawned,
+not destroyed, have matching faction, and represent a building or terrain. The
+current driver must be exactly JobDriver_ConstructFinishFrame (special
+subclasses excluded), reference the actual worker/current job, and target this
+Frame. Buildings without quality and terrain do not need CompQuality.
+
+Walls, furniture, worktables, attachments, floors, bridges and foundations using
+this normal Frame path are included. Repair, deconstruction, smoothing,
+uninstall/reinstall, hauling, movement and bills are not patched. Roof work has
+a separate `JobDriver_AffectRoof.MakeNewToils()` workLeft accumulator; snowmen
+and cube sculptures use dedicated drivers and also remain unchanged.
+Sources: `refs/decompiled/Assembly-CSharp/RimWorld/JobDriver_AffectRoof.cs`,
+`refs/decompiled/Assembly-CSharp/RimWorld/JobDriver_Repair.cs`,
+`refs/decompiled/Assembly-CSharp/RimWorld/JobDriver_RemoveBuilding.cs`,
+`refs/decompiled/Assembly-CSharp/RimWorld/JobDriver_SmoothWall.cs`,
+`refs/decompiled/Assembly-CSharp/RimWorld/Toils_Construct.cs`,
+`refs/decompiled/Assembly-CSharp/RimWorld/Blueprint_Install.cs`,
+`refs/decompiled/Assembly-CSharp/RimWorld/JobDriver_BuildSnowman.cs`, and
+`refs/decompiled/Assembly-CSharp/RimWorld/JobDriver_BuildCubeSculpture.cs`.
+
+`LegendaryConstructionPatch` continues patching the separate
+`Frame.CompleteConstruction(Pawn)` method. The speed patch neither replaces
+that call nor its quality pipeline. Availability/failure states for building
+speed, crafting speed and both quality paths are independent. Normal modded
+definitions using the vanilla Frame driver inherit the effect. Mods replacing
+the iterator delegate, construction driver or work block can bypass it or
+trigger the strict unavailable fallback; autonomous builders are not covered.
+
+#### Verification and manual checks
+
+Release build passes with zero warnings/errors. The full suite passes 1,133
+assertions plus 151 across 20 fresh test processes.
+
+Tests inspect and patch the real installed iterator callback, check exactly-one
+registration, local relocation, material-branch labels, exception metadata,
+missing/changed/duplicate patterns and unchanged rejected IL. An executable
+native-shaped probe uses the emitted helper at all six multipliers, with
+different material factors and no Stuff. It verifies the shared botch/progress
+amount, failure/completion branches, XP/elapsed counters and faction exclusion.
+Probe stat providers and completion/failure side effects are test-only stand-ins
+to avoid initializing profiles/maps/RNG; full pawn skill and material/spawn
+pipelines still require in-game testing. Fresh test processes round-trip all six
+preferences and exercise every shared-settings writer while retaining Basic and
+Special Needs, raised limits, pending resets and crafting preferences.
+
+After user deployment, test all dropdown choices on ordinary and quality
+furniture, differently stuffed walls, attachments and terrain. Check a low-skill
+builder's botches and normal resource handling; inspect XP per elapsed tick.
+Verify prisoners/NPCs, repair, deconstruction, smoothing, roofs and hauling stay
+unchanged; include an eligible slave and construction mechanoid. Change speeds
+mid-job, save/reload partially completed Frames, fully restart to check settings,
+and test Legendary on/off independently. Check narrow/UI-scaled scrolling and
+compatibility with other construction mods. Total job time includes unaffected
+travel/hauling, and completion remains interval-based rather than exactly 20x.
+
+## Research Speed Multiplier (1.7.4998b)
+
+### Verified ordinary research path
+
+`RimWorld.JobDriver_Research.MakeNewToils()` (protected,
+`IEnumerable<Verse.AI.Toil>`) assigns an `Action<int>` to the research toil's
+`tickIntervalAction`. Its actual `research.actor` contributes
+`ResearchSpeed * bench.ResearchSpeedFactor * delta` through the public instance
+`void RimWorld.ResearchManager.ResearchPerformed(float amount, Pawn researcher)`.
+Intellectual XP is a separate `0.1 * delta` call, followed by native comfort gain.
+The workgiver/toil retain their ordinary project/bench checks, reservations,
+movement, fail conditions and 4,000-tick job duration.
+Sources: `refs/decompiled/Assembly-CSharp/RimWorld/JobDriver_Research.cs` and
+`refs/decompiled/Assembly-CSharp/RimWorld/WorkGiver_Researcher.cs`.
+
+`ResearchManager.ResearchPerformed` converts work by `0.00825`, applies
+`Storyteller.difficulty.researchSpeedFactor`, divides by the current project's
+`CostFactor(researcher.Faction.def.techLevel)`, and retains the native debug
+fast-research 500x factor. It records the credited points, adds progress and
+calls `FinishProject` if the project's native `IsFinished` becomes true.
+`ResearchProjectDef.Cost` remains unchanged. The public completion method is
+`void FinishProject(ResearchProjectDef proj, bool doCompletionDialog = false,
+Pawn researcher = null, bool doCompletionLetter = true)`; prerequisite handling,
+unlocks, letters/dialogs, tales and active-project clearing remain entirely native.
+Sources: `refs/decompiled/Assembly-CSharp/RimWorld/ResearchManager.cs` and
+`refs/decompiled/Assembly-CSharp/Verse/ResearchProjectDef.cs`.
+
+A selective call-site search found only JobDriver_Research invoking
+ResearchPerformed in the installed decompiled sources. Native books instead use
+`AddProgress(ResearchProjectDef, float, Pawn source = null)` in
+`ReadingOutcomeDoerGainResearch.OnReadingTick(...)`; research-granting items use
+`FinishProject` in `CompUseEffect_FinishRandomResearchProject.FinishInstantly`.
+Anomaly uses the separate `ApplyKnowledge` APIs, including Anomaly books, and
+study jobs use their own CompStudiable pipeline. These entry points are not
+patched. The patch is narrower than a global ResearchPerformed prefix: even a
+direct external call while its researcher has an active research job is unscaled.
+Sources: `refs/decompiled/Assembly-CSharp/RimWorld/ReadingOutcomeDoerGainResearch.cs`,
+`refs/decompiled/Assembly-CSharp/RimWorld/CompUseEffect_FinishRandomResearchProject.cs`,
+`refs/decompiled/Assembly-CSharp/RimWorld/ReadingOutcomeDoerGainAnomalyResearch.cs`,
+`refs/decompiled/Assembly-CSharp/RimWorld/JobDriver_StudyItem.cs`, and
+`refs/decompiled/Assembly-CSharp/RimWorld/JobDriver_StudyInteract.cs`.
+
+### Scoped patch, policy and persistence
+
+`ResearchSpeedPatch` resolves the iterator using Harmony 3
+`AccessTools.EnumeratorMoveNext`, then reuses the exact-one Action<int> delegate
+assignment resolver. The target is the resolved interval callback, with no
+generated names or fixed instruction offsets. Its transpiler requires exactly
+one call to the exact ResearchPerformed overload and rejects an existing
+redirect. It substitutes a static helper taking the same stack arguments:
+`(ResearchManager, float, Pawn)`. Labels and exception blocks stay on that single
+instruction. The helper scales the work amount and calls the original manager
+method exactly once; no global manager patch, pawn stat or project-cost edit is
+installed. Owner ID: `slava.rimworldutilities.research.speed`.
+
+`ResearchSpeedService` receives `CraftingService.IsEligibleWorker`, keeping the
+same non-destroyed, non-null player-faction and non-prisoner policy. It adds an
+exact ordinary JobDriver_Research/current-job/worker match, a live spawned
+Building_ResearchBench target and an active project with positive baseCost,
+no knowledgeCategory and zero knowledgeCost. Special driver subclasses and
+specialized projects are excluded. Normal eligible slaves/mechanoids are not
+excluded by race/colonist status; native job capability still determines who can
+actually perform this work. Multiple researchers each scale only their own
+contribution. At 1x or when unavailable/ineligible, the original float is returned
+without arithmetic. XP per elapsed tick stays native; less total XP per completed
+project is expected at faster speeds.
+
+`CustomStackLimitSettings.ResearchSpeedMultiplier` uses the stable
+`researchSpeedMultiplier` tag, default 1, and the existing 1/2/3/5/10/20 choices.
+Invalid saved values fall back to 1. Candidate copying, Scribe serialization,
+CopyFrom and Matches include the field. Atomic persistence retains all stack
+limits/resets, Legendary, Crafting Speed, Building Speed and Basic/Special Needs.
+A compact Research panel follows Craft / Build in the same scroll view; other
+panels' content is unchanged. Runtime matching failures leave the original IL
+untouched, warn once and disable only Research Speed. Its existing helper also
+honors subsequent unavailable state. All UI rendering state is restored through
+UtilitiesPanel, and the new dropdown has independent availability/error tooltips.
+
+### Verification and remaining runtime checks
+
+Release build passes with zero warnings/errors. The full suite passes 1,292
+assertions plus 186 across 27 fresh test processes.
+
+Tests cover all choices, exact 1x float identity, failed saves, worker/job/project
+exclusions, independent availability, labels/exception blocks, exact-one matches
+and unchanged rejected IL. They resolve and install the actual game callback.
+An emitted contribution probe executes the real ResearchPerformed body, testing
+native difficulty and tech factors, debug composition, records, two researchers,
+direct unscaled calls, book AddProgress and native completion dispatch.
+Test-only record and completion prefixes isolate DefMap/UI/world effects; the
+completion decision runs natively but the full FinishProject side effects and
+real skill tracker are not exercised. In-memory Game/RecordDef/debug fixtures are
+restored afterward; no player profile or save is used. Fresh processes verify
+each multiplier and cross-service settings writes, including legacy defaults.
+
+After user deployment, compare work at all six speeds, check native Intellectual
+XP per tick, and run two eligible researchers at different benches. Finish a
+small project and verify exactly one normal completion dialog/unlock, unchanged
+prerequisites and no automatic project selection. Test prisoners/NPCs, reading,
+research-granting items, quest/debug rewards and Anomaly studying for unchanged
+behavior. Change speed mid-job, save/reload progress, fully restart for settings,
+and check scrolling at different UI scales. Mods that replace the research
+delegate/driver can bypass the patched callback; mods changing its call pattern
+can trigger the unavailable fallback. Specialized/custom research paths are not
+promised support, and other mods' research factors may compose with this one.
+
 ## Colonist Needs
 
 ### Phase 1: Basic Keep Full
@@ -1158,10 +1390,9 @@ is at least 360 units, otherwise one column. Each has a short Keep Full tooltip.
 `MainTabWindow_Utilities` reserves the required needs-panel height and scrolls
 the three sections; Item Editor and Crafting contents are preserved. Rendering
 state is restored by the existing `UtilitiesPanel` guard. Only runtime/settings
-errors add a compact status line. No Special controls are displayed.
+errors add a compact status line. Biotech's Special controls are described below.
 
-Release build passes with zero warnings/errors. The complete suite passes 725
-assertions plus 70 across ten fresh test processes. Needs checks cover each
+Release build passes with zero warnings/errors. Needs checks cover each
 toggle, native level clamping/changed maxima, strict eligibility, missing/added/
 removed needs, immediate application, disabled behavior and shared persistence.
 The native integration test patches the actual tracker and runs instrumented
@@ -1189,4 +1420,91 @@ Manual checks after user deployment:
    stack-limit/reset settings, Always Legendary and crafting speed. Check panel
    scrolling and both column layouts at different UI scales.
 
-Learning, Play, Deathrest, chemical needs and Hemogen are not implemented.
+### Special Phase 1: Learning and Play (Biotech)
+
+`ColonistNeedsService.SpecialNeeds` adds the independent identifiers `Learning`
+and `Play` to the existing `EnabledColonistNeeds` set. Both default off in older
+settings, including Basic-only settings. The existing Scribe string-set format,
+copying, atomic save/read-back verification and shared settings writes already
+support these keys; no schema migration or second settings class is needed.
+`Verse.ModsConfig.BiotechActive` gates enabling and refilling both special needs.
+Saved preferences are retained when Biotech is inactive, while the Special group
+is hidden and Basic needs remain usable. Disabling never reverses the last refill.
+Source: `refs/decompiled/Assembly-CSharp/Verse/ModsConfig.cs`.
+
+The resolved vanilla definitions in the game's
+`Data/Biotech/Defs/NeedDefs/Needs.xml` use:
+
+| NeedDef | Class | Developmental stage | Vanilla faction restriction |
+| --- | --- | --- | --- |
+| `Learning` | `RimWorld.Need_Learning` | Child | `colonistsOnly` |
+| `Play` | `RimWorld.Need_Play` | Baby | `colonistAndPrisonersOnly` |
+
+`RimWorld.Pawn_NeedsTracker.ShouldHaveNeed(NeedDef)` checks
+`developmentalStageFilter.Has(pawn.DevelopmentalStage)` when maintaining the
+tracker. Our service only reads existing needs: it neither duplicates this
+lifecycle nor adds missing needs to babies, children or adults. The unchanged
+strict `IsEligible` filter still rejects prisoners even though vanilla allows
+them to have Play, and rejects slaves/guests/lodgers/animals/mechanoids/dead or
+suspended pawns. There is no new pawn-location restriction.
+Source: `refs/decompiled/Assembly-CSharp/RimWorld/Pawn_NeedsTracker.cs`.
+
+Both classes inherit the public `Need.CurLevel` setter and actual `MaxLevel`.
+They require no auxiliary state writes for Keep Full:
+
+- `RimWorld.Need_Learning.NeedInterval()` normally subtracts `0.00045000002`
+  unless frozen, then adds `pawn.ageTracker.GrowthPointsPerDay * 0.0025` when
+  `canGainGrowthPoints` is true. Its frozen check also includes Deathrest.
+- `RimWorld.Need_Play.NeedInterval()` normally subtracts `0.00025` unless frozen.
+  `Need_Play.Play(float)` is a separate gameplay action and is not called.
+- `Verse.Pawn_AgeTracker.GrowthPointsPerDay` uses current Learning when applicable;
+  `GrowthPointsPerDayAtLearningLevel(float)` scales that level by native growth
+  and child-aging factors. Keeping Learning full therefore increases growth
+  through vanilla's existing calculation. Prefix refill is followed by vanilla
+  decay before growth is evaluated, and postfix refill restores the maximum.
+  No growth points, growth flags, skills, learning desires or care jobs are
+  written directly. Native behavior that depends on satisfied needs remains in
+  effect; this does not force learning or caregiver activities to continue.
+
+Sources: `refs/decompiled/Assembly-CSharp/RimWorld/Need_Learning.cs`,
+`refs/decompiled/Assembly-CSharp/RimWorld/Need_Play.cs`,
+`refs/decompiled/Assembly-CSharp/RimWorld/Need.cs`, and
+`refs/decompiled/Assembly-CSharp/Verse/Pawn_AgeTracker.cs`.
+
+The existing 150-tick `ColonistNeedsPatch` prefix/postfix and immediate
+`PawnsFinder` pass handle both identifiers, including Special-only settings.
+There are no additional Harmony patches, timers or retained Need references.
+Native `NeedInterval()` still runs once. The same supported maps/caravan/travel
+coverage and custom-holder limitations documented above apply.
+The panel shares the existing group renderer, two-column threshold and rendering
+state guard; its requested height includes Special only with Biotech active.
+
+Verification: Release build has zero warnings/errors; the complete suite passes
+927 assertions plus 116 across 13 fresh test processes. Coverage includes
+independent Special toggles, actual changing maxima, missing/replaced needs,
+stage-appropriate fixture lists, all strict eligibility cases, Biotech absence,
+immediate/periodic refill, failed saves, Basic compatibility and shared settings.
+Native tests execute the actual Learning/Play interval bodies through the patched
+tracker and verify one native growth increment per interval. Headless subclasses
+isolate frozen-state lookups, and a test-only fixed growth-rate provider avoids
+profile/stat initialization; the complete growth formula is not simulated.
+Fresh test processes verify Basic-only defaults, all needs on/off, Learning only,
+and Play only while retaining stack limits, pending resets and crafting settings.
+
+Manual checks after user deployment:
+
+1. With Biotech active, verify Special appears below Basic, defaults off, and
+   remains compact at both column widths. Without Biotech active, verify it is
+   hidden and Basic remains functional.
+2. Enable Learning for a free child and Play for a free baby independently. Check
+   immediate fill, sustained levels through native intervals and normal decline
+   after disabling. Adults and pawns missing the need must gain no new needs.
+3. Observe native child growth points and age transitions, learning desires and
+   baby-care behavior. Repeat on another loaded map and in a caravan. Prisoners,
+   slaves, lodgers and suspended pawns must remain untouched.
+4. Save, fully exit RimWorld, restart and reload with each Special toggle enabled
+   alone, then together with Basic. Check persistence and existing Crafting and
+   Item Editor settings. Other mods replacing need updates still need runtime
+   compatibility checks; unknown custom world holders remain outside coverage.
+
+Deathrest, chemical needs and Hemogen are not implemented.

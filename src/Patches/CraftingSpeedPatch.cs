@@ -46,7 +46,7 @@ internal static class CraftingSpeedPatch
         }
 
         callback = null;
-        error = "Could not resolve exactly one recipe interval callback with the expected signature.";
+        error = "Could not resolve exactly one interval callback with the expected signature.";
         return false;
     }
 

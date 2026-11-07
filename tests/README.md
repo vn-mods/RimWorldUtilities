@@ -99,6 +99,31 @@ branching and NPC exclusion. It models those counters; a real pawn skill tracker
 and complete bill job still require in-game checks. Fresh-process settings checks
 exercise 20× with Legendary on, 3× with it off, and return to 1×.
 
+Building Speed checks cover independent preferences/availability, the same six
+choices, exact 1× identity, failed writes, normal live Frame context, faction and
+prisoner exclusions, player slaves/mechanoids, and excluded/special drivers.
+The actual construction iterator and delegate are resolved without generated
+names. Native IL checks verify the shared rate/material block, work local used
+by botch probability and progress, labels/exception blocks, relocated locals and
+unchanged incompatible input. Integration checks install the real patch, preserve
+the separate construction-quality patch, and execute an emitted progress probe
+at all six speeds with different/no materials. The probe verifies work, botch
+math, XP/elapsed counters and completion/failure branches; stat and spawn/failure
+providers are isolated test substitutes. Full construction, skill learning and
+material loss require in-game checks. Fresh processes verify each multiplier and
+all settings after Needs, Item Editor and Crafting writes.
+
+Research Speed checks resolve and patch the actual ordinary research callback,
+verify one contribution redirect and preserve all native XP/comfort instructions
+and branch/exception metadata. They cover all six choices, exact 1x identity,
+worker/job/project eligibility and independent failure. An executable work probe
+runs the real ResearchPerformed body, checking native factors, two researchers,
+unscaled direct/book contributions, records and completion dispatch. Test-only
+record/completion prefixes isolate UI/world effects; full completion notifications
+and live Intellectual XP still need in-game checks. Scoped fixtures restore
+Game/RecordDef/debug state, and fresh processes verify all choices while retaining
+every other settings group after cross-service writes.
+
 Colonist Needs checks use scoped in-memory pawn/quest/tick fixtures. They cover
 each independent basic toggle, immediate application and failed writes, actual
 MaxLevel/clamping, dynamic need lists, unsupported definitions, strict eligibility
@@ -110,8 +135,15 @@ batched delta, no off-phase writes, changed eligibility, removal/addition, disab
 during the native call and detached trackers. These do not run a complete pawn,
 map or caravan tick cycle; those paths are verified by source and manual tests.
 Scoped fixtures restore Current.Game and DefOf fields without reading the player
-profile. Fresh test processes verify all eight settings on/off while retaining
-pending resets, raised limits, crafting preferences and unknown future keys.
+profile. Special checks cover independent Learning/Play toggles, Biotech gating,
+missing needs at different developmental stages, changed maxima and all strict
+eligibility cases. Native Learning/Play subclasses execute the real interval
+bodies while isolating frozen-state lookups; a test-only fixed growth-rate
+provider verifies native growth accumulation once per interval without profile
+or stat initialization. Full growth calculations and care/learning jobs still
+need in-game verification. Fresh test processes verify Basic-only compatibility,
+all ten settings on/off, Learning only and Play only while retaining pending
+resets, raised limits, crafting preferences and unknown future keys.
 
 The fresh process is the test executable, not RimWorld. Actual in-game save/load,
 map spawning, hauling, splitting, and merging still require manual verification.

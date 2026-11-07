@@ -30,6 +30,10 @@ internal sealed class CraftingService
         ? settings.CraftingSpeedMultiplier : 1;
     public bool IsSpeedAvailable { get; private set; }
     public string SpeedUnavailableReason { get; private set; } = "Crafting speed patch has not initialized.";
+    public int BuildingSpeedMultiplier => IsValidSpeedMultiplier(settings.BuildingSpeedMultiplier)
+        ? settings.BuildingSpeedMultiplier : 1;
+    public bool IsBuildingSpeedAvailable { get; private set; }
+    public string BuildingSpeedUnavailableReason { get; private set; } = "Building speed patch has not initialized.";
 
     public CraftingService(CustomStackLimitSettings settings, Action<CustomStackLimitSettings> persist,
         Func<Faction?>? playerFaction = null)
@@ -55,6 +59,12 @@ internal sealed class CraftingService
     {
         IsConstructionAvailable = available;
         ConstructionUnavailableReason = available ? string.Empty : reason;
+    }
+
+    internal void SetBuildingSpeedAvailability(bool available, string reason = "")
+    {
+        IsBuildingSpeedAvailable = available;
+        BuildingSpeedUnavailableReason = available ? string.Empty : reason;
     }
 
     public static bool IsValidSpeedMultiplier(int value) => value is 1 or 2 or 3 or 5 or 10 or 20;
@@ -93,6 +103,20 @@ internal sealed class CraftingService
 
         var candidate = settings.Copy();
         candidate.CraftingSpeedMultiplier = multiplier;
+        return TrySave(candidate);
+    }
+
+    public bool TrySetBuildingSpeedMultiplier(int multiplier)
+    {
+        if (!IsValidSpeedMultiplier(multiplier) || (!IsBuildingSpeedAvailable && multiplier != 1)) return false;
+        if (settings.BuildingSpeedMultiplier == multiplier)
+        {
+            PersistenceError = string.Empty;
+            return true;
+        }
+
+        var candidate = settings.Copy();
+        candidate.BuildingSpeedMultiplier = multiplier;
         return TrySave(candidate);
     }
 
@@ -154,6 +178,21 @@ internal sealed class CraftingService
     internal bool IsEligibleProgress(JobDriver_DoBill driver) =>
         driver?.job?.RecipeDef is RecipeDef recipe && IsEligibleProduction(recipe, driver.pawn, driver);
 
+    public float ScaleBuildingWork(float work, Pawn worker, Frame frame)
+    {
+        var multiplier = BuildingSpeedMultiplier;
+        return IsBuildingSpeedAvailable && multiplier != 1 && IsEligibleBuildingProgress(worker, frame)
+            ? work * multiplier : work;
+    }
+
+    internal bool IsEligibleBuildingProgress(Pawn worker, Frame frame) =>
+        IsEligibleWorker(worker) && frame != null && !frame.Destroyed && frame.Spawned &&
+        frame.Faction == worker.Faction && frame.def?.entityDefToBuild is ThingDef { category: ThingCategory.Building } or TerrainDef &&
+        worker.jobs?.curDriver is JobDriver_ConstructFinishFrame driver &&
+        driver.GetType() == typeof(JobDriver_ConstructFinishFrame) &&
+        ReferenceEquals(driver.pawn, worker) && ReferenceEquals(driver.job, worker.CurJob) &&
+        ReferenceEquals(driver.job?.GetTarget(TargetIndex.A).Thing, frame);
+
     private bool IsEligibleProduction(RecipeDef recipe, Pawn worker, JobDriver_DoBill? expectedDriver = null)
     {
         if (!IsEligibleWorker(worker))
@@ -177,6 +216,6 @@ internal sealed class CraftingService
         return recipe.products?.Count > 0 || recipe.specialProducts?.Count > 0;
     }
 
-    private bool IsEligibleWorker(Pawn worker) => worker != null && !worker.Destroyed && !worker.IsPrisoner &&
+    internal bool IsEligibleWorker(Pawn worker) => worker != null && !worker.Destroyed && !worker.IsPrisoner &&
         worker.Faction != null && worker.Faction == playerFaction();
 }
