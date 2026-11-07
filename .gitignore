@@ -1,14 +1,27 @@
-# Game assemblies (local references)
-refs/
 
-# Build artifacts
-bin/
-obj/
-build/
+# Local game references (not redistributable)
+/refs/
 
-# IDE / OS
+# .NET build artifacts
+**/bin/
+**/obj/
+/build/
+
+# Generated mod assemblies
+/mod/1.7/Assemblies/*.dll
+
+# Release archives
+/dist/
+
+# Local configuration
+/.env
+/.env.*
+!/.env.example
+
+# IDE and OS files
 *.user
+*.suo
+.vs/
+.idea/
 .DS_Store
-
-# Compiled mod DLL
-mod/1.7/Assemblies/*.dll
+Thumbs.db

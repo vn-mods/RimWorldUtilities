@@ -1,153 +1,66 @@
-# Focused mod checks
+# Tests
 
-The project uses local game references plus the installed Harmony 3 DLL. Copy
-`Mods/Harmony/1.7/Assemblies/0Harmony.dll` unchanged into `refs/0Harmony.dll` before
-building on a new checkout. `refs/` is ignored; the mod's Harmony reference is
-compile-only and is not bundled in the mod. The test executable copies it to its
-own build output.
+RimWorldUtilities uses a package-free C# console test project at
+`tests/RimWorldUtilities.Tests/`. It combines isolated regression checks with
+optional native-assembly integration checks. **Passing the suite does not replace
+in-game testing.**
 
-Run the package-free console test suite from the project root:
+## Prerequisites
+
+- The .NET SDK required by the project (currently .NET 10).
+- Local RimWorld reference assemblies in `refs/` (not included in Git).
+- Harmony 3 from the installed Harmony mod. On a fresh checkout, copy
+  `Mods/Harmony/1.7/Assemblies/0Harmony.dll` to `refs/0Harmony.dll` without
+  modifying it. This is a compile-time reference; the mod does not bundle Harmony.
+
+## Run
+
+From the repository root:
 
 ```sh
 dotnet run --project tests/RimWorldUtilities.Tests/RimWorldUtilities.Tests.csproj -c Release
 ```
 
-The core checks cover integer validation, explicit opt-in, original-limit capture,
-failed writes, unsupported definitions, higher limits from other mods, and limits
-that must never decrease. They also cover multiple independently enabled types,
-per-type errors, and preservation of unrelated definitions. They use isolated
-definition fixtures, not the global game definition database.
-
-Reset checks cover enabling, durable scheduling/cancellation, keeping active
-limits and quantities unchanged, preserving pending markers during Apply,
-completion only at startup, other mods' higher limits, and retained original
-metadata. Failed scheduling/cancellation writes preserve the previous state;
-failed startup cleanup must still suppress the reset override across restarts.
-
-HP checks cover integer bounds, the useHitPoints flag, non-stackable selection
-eligibility, separate stack eligibility, and book/minified/missing-quality
-exclusions. Native property checks use the actual CompQuality and StatWorker
-cache implementations with isolated items and a test HP stat worker. They verify
-callback counts, no art generation, same-quality no-ops, absolute HP preservation,
-clamping after downgrades, fresh Max calculations, and stale-target rejection.
-Only live selection lookup is replaced by a fixture resolver; no map is started.
-
-Crafting checks cover opt-in behavior, immediate enable/disable, unavailable
-patches, failed writes, faction/prisoner exclusions, slave and non-humanlike
-workers, matching active production bills, medical/autonomous exclusions,
-quality support and recipe output checks. IL tests verify exact-one matching,
-unchanged incompatible input, argument order, branch labels and exception blocks.
-
-Construction quality checks use the same Always Legendary setting and shared
-worker eligibility. They cover player/NPC/prisoner/slave construction, building
-ownership, missing quality support, terrain, disabled settings, and the fact that
-Frame is already destroyed at its native quality-generation call. Separate
-availability checks verify that a construction mismatch preserves crafting and
-vice versa. The actual Frame method is patched in the isolated integration
-process; a receiver-shaped probe checks generator argument forwarding, one native
-quality callback, and buildings without quality support. The remaining native
-Frame calls are checked for unchanged order. Reinstallation and cube obsession
-are not patched. Complete map construction, real inspiration/RNG, art and letters
-still require in-game verification.
-
-To also exercise the actual Scribe serializer, atomic settings replacement, and
-loading those settings in a fresh test process, provide the installed game DLL
-directory:
+To enable the additional checks that require installed RimWorld runtime DLLs,
+set `RIMWORLD_GAME_DIR` to the game installation directory:
 
 ```sh
-RIMWORLD_GAME_DIR="/path/to/RimWorld v1.7.4998b" \
+RIMWORLD_GAME_DIR="/path/to/RimWorld" \
   dotnet run --project tests/RimWorldUtilities.Tests/RimWorldUtilities.Tests.csproj -c Release
 ```
 
-These integration checks read the game's runtime DLLs for native logging
-dependency. They initialize only in-memory default preferences, write settings
-under a temporary directory, and delete the fixtures afterward. They do not
-launch RimWorld or read/write the player's settings or saves. Without that
-environment variable, native property/serialization/restart checks are explicitly skipped.
-The temporary MaxHitPoints StatDef fixture is restored after property checks and
-exists only in the test process; no player/game definitions on disk are modified.
+Without `RIMWORLD_GAME_DIR`, the tests requiring those runtime DLLs (including
+some native property, serialization, and fresh-process checks) are skipped.
+Review the test output to see which checks actually ran.
 
-The integration suite also reads a literal settings fixture using the Steel-only
-release's XML tags, verifies a raised Steel limit and original metadata survive
-without a file rewrite, enables another item type, then restores both keys in a
-fresh process. Fixture files never replace the player's mod settings.
-Additional native checks round-trip pending reset markers, cancel one and verify
-the old limit in a fresh process, then schedule it again and verify completion
-across two successive fresh processes. Other enabled types stay untouched.
+## What is covered
 
-Crafting integration checks also inspect the real game IL and install the
-production Harmony patch in the isolated test process. A patched probe exercises
-the redirect and native `CompQuality` callback without starting a map. The probe
-stubs only the native-generation call inside our helper, before compiling the
-probe, to avoid initializing `ModsConfig` or accessing the player's profile.
-The global `QualityUtility` method is never patched. Counts and argument checks
-verify that the redirect calls generation exactly once and forwards the worker,
-skill and inspiration flag. Native RNG, inspiration consumption, art and letters
-still need in-game verification. Intentional incompatible-pattern checks exercise
-the unavailable state and warning path. Crafting settings are round-tripped with
-Scribe in fresh processes, including both services writing shared settings.
+- **Item Editor:** stack and HP bounds, target eligibility, quality callbacks,
+  cache invalidation, and stale-selection protection.
+- **Large stacks and settings:** per-item-definition overrides, resets,
+  backward-compatible settings, failed writes, and persistence across fresh
+  test processes.
+- **Crafting and construction:** Always Legendary eligibility and Harmony
+  call-site matching; crafting/building speed factors and native IL handling.
+- **Research:** speed factors, ordinary research eligibility, and unaffected
+  alternative research paths.
+- **Colonist Needs:** eligibility, Keep Full intervals, basic needs, and
+  Biotech Learning/Play behavior.
+- **Compatibility checks:** preservation of unrelated settings, rejection of
+  incompatible patch patterns, and independent feature availability.
 
-Speed checks cover the exact 1/2/3/5/10/20 choices, 1× returning the original
-float unchanged, invalid settings, worker/bill eligibility, separate patch
-availability and preservation of Legendary. Pure IL tests cover callback
-resolution from the delegate-field assignment, exact-one decrement matching,
-receiver reloads without fixed local indices, labels/exception blocks, and
-unchanged rejected input. Native checks install the patch on the actual generated
-game callback and execute a progress probe at all six speeds. The probe verifies
-work/unfinished-work values, unchanged elapsed and XP tick counters, completion
-branching and NPC exclusion. It models those counters; a real pawn skill tracker
-and complete bill job still require in-game checks. Fresh-process settings checks
-exercise 20× with Legendary on, 3× with it off, and return to 1×.
+Some integration checks use original game assemblies, real Scribe serialization,
+and isolated Harmony patches. They may start **new test executable processes**,
+not RimWorld itself. Fixtures and test settings are temporary; these checks do
+not deliberately access the player's settings or saves.
 
-Building Speed checks cover independent preferences/availability, the same six
-choices, exact 1× identity, failed writes, normal live Frame context, faction and
-prisoner exclusions, player slaves/mechanoids, and excluded/special drivers.
-The actual construction iterator and delegate are resolved without generated
-names. Native IL checks verify the shared rate/material block, work local used
-by botch probability and progress, labels/exception blocks, relocated locals and
-unchanged incompatible input. Integration checks install the real patch, preserve
-the separate construction-quality patch, and execute an emitted progress probe
-at all six speeds with different/no materials. The probe verifies work, botch
-math, XP/elapsed counters and completion/failure branches; stat and spawn/failure
-providers are isolated test substitutes. Full construction, skill learning and
-material loss require in-game checks. Fresh processes verify each multiplier and
-all settings after Needs, Item Editor and Crafting writes.
+## What is not covered
 
-Research Speed checks resolve and patch the actual ordinary research callback,
-verify one contribution redirect and preserve all native XP/comfort instructions
-and branch/exception metadata. They cover all six choices, exact 1x identity,
-worker/job/project eligibility and independent failure. An executable work probe
-runs the real ResearchPerformed body, checking native factors, two researchers,
-unscaled direct/book contributions, records and completion dispatch. Test-only
-record/completion prefixes isolate UI/world effects; full completion notifications
-and live Intellectual XP still need in-game checks. Scoped fixtures restore
-Game/RecordDef/debug state, and fresh processes verify all choices while retaining
-every other settings group after cross-service writes.
+The test suite does **not** run a complete RimWorld game, map, crafting job,
+construction, caravan, or save/load session. Full gameplay behavior, interactions
+with other mods, and the risks of removing large-stack overrides still require
+manual testing in a disposable save. In particular, reducing stack limits can
+cause loss of oversized quantities; the suite does not normalize them.
 
-Colonist Needs checks use scoped in-memory pawn/quest/tick fixtures. They cover
-each independent basic toggle, immediate application and failed writes, actual
-MaxLevel/clamping, dynamic need lists, unsupported definitions, strict eligibility
-(including babies, children, prisoners, slaves, lodgers and mechanoids), and shared
-settings preservation. The native checks patch the real Pawn_NeedsTracker method
-and run instrumented Need subclasses through its actual 150-tick hash gate and
-native interval loop. They verify before/after timing, one original update,
-batched delta, no off-phase writes, changed eligibility, removal/addition, disable
-during the native call and detached trackers. These do not run a complete pawn,
-map or caravan tick cycle; those paths are verified by source and manual tests.
-Scoped fixtures restore Current.Game and DefOf fields without reading the player
-profile. Special checks cover independent Learning/Play toggles, Biotech gating,
-missing needs at different developmental stages, changed maxima and all strict
-eligibility cases. Native Learning/Play subclasses execute the real interval
-bodies while isolating frozen-state lookups; a test-only fixed growth-rate
-provider verifies native growth accumulation once per interval without profile
-or stat initialization. Full growth calculations and care/learning jobs still
-need in-game verification. Fresh test processes verify Basic-only compatibility,
-all ten settings on/off, Learning only and Play only while retaining pending
-resets, raised limits, crafting preferences and unknown future keys.
-
-The fresh process is the test executable, not RimWorld. Actual in-game save/load,
-map spawning, hauling, splitting, and merging still require manual verification.
-Reset is explicitly destructive: map-spawned stacks can lose excess while held
-stacks may remain oversized. These tests do not normalize stacks or claim that
-all oversized stacks are automatically truncated. See `docs/game-api-notes.md`
-for the full-restart manual checks and native holder-loading limitations.
+See `docs/game-api-notes.md` for the related API findings and high-risk manual
+verification scenarios.
