@@ -16,6 +16,7 @@ public sealed class RimWorldUtilitiesMod : Mod
     internal ColonistNeedsService ColonistNeeds { get; }
     internal ResearchSpeedService Research { get; }
     internal AbilityCooldownService Abilities { get; }
+    internal BiosculpterCycleService BiosculpterCycles { get; }
 
     public RimWorldUtilitiesMod(ModContentPack content)
         : base(content)
@@ -30,6 +31,7 @@ public sealed class RimWorldUtilitiesMod : Mod
         Research = new ResearchSpeedService(settings, settingsStore.Save, Crafting.IsEligibleWorker);
         ColonistNeeds = new ColonistNeedsService(settings, settingsStore.Save);
         Abilities = new AbilityCooldownService(settings, settingsStore.Save);
+        BiosculpterCycles = new BiosculpterCycleService(settings, settingsStore.Save);
         Instance = this;
         LegendaryCraftingPatch.Install(Crafting);
         LegendaryConstructionPatch.Install(Crafting);
@@ -38,6 +40,8 @@ public sealed class RimWorldUtilitiesMod : Mod
         ResearchSpeedPatch.Install(Research);
         ColonistNeedsPatch.Install(ColonistNeeds);
         AbilityCooldownPatch.Install(Abilities);
+        BiosculpterCyclePatch.Install(BiosculpterCycles);
+        BiosculpterAgeReversalPatch.Install(BiosculpterCycles);
         Log.Message("[RimWorldUtilities] Mod loaded successfully!");
     }
 

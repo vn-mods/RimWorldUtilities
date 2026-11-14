@@ -14,6 +14,7 @@ public sealed class CustomStackLimitSettings : ModSettings
     public int ResearchSpeedMultiplier = 1;
     public HashSet<string> EnabledColonistNeeds = new();
     public bool DisableAbilityCooldowns;
+    public bool FastBiosculpterCycles;
 
     public override void ExposeData()
     {
@@ -26,6 +27,7 @@ public sealed class CustomStackLimitSettings : ModSettings
         Scribe_Values.Look(ref ResearchSpeedMultiplier, "researchSpeedMultiplier", 1);
         Scribe_Collections.Look(ref EnabledColonistNeeds, "enabledColonistNeeds", LookMode.Value);
         Scribe_Values.Look(ref DisableAbilityCooldowns, "disableAbilityCooldowns", false);
+        Scribe_Values.Look(ref FastBiosculpterCycles, "fastBiosculpterCycles", false);
         EnabledLimits ??= new();
         OriginalLimits ??= new();
         PendingResets ??= new();
@@ -42,7 +44,8 @@ public sealed class CustomStackLimitSettings : ModSettings
         BuildingSpeedMultiplier = BuildingSpeedMultiplier,
         ResearchSpeedMultiplier = ResearchSpeedMultiplier,
         EnabledColonistNeeds = new HashSet<string>(EnabledColonistNeeds),
-        DisableAbilityCooldowns = DisableAbilityCooldowns
+        DisableAbilityCooldowns = DisableAbilityCooldowns,
+        FastBiosculpterCycles = FastBiosculpterCycles
     };
 
     internal void CopyFrom(CustomStackLimitSettings other)
@@ -56,6 +59,7 @@ public sealed class CustomStackLimitSettings : ModSettings
         ResearchSpeedMultiplier = other.ResearchSpeedMultiplier;
         EnabledColonistNeeds = new HashSet<string>(other.EnabledColonistNeeds);
         DisableAbilityCooldowns = other.DisableAbilityCooldowns;
+        FastBiosculpterCycles = other.FastBiosculpterCycles;
     }
 
     internal bool Matches(CustomStackLimitSettings other) =>
@@ -63,7 +67,8 @@ public sealed class CustomStackLimitSettings : ModSettings
         PendingResets.SetEquals(other.PendingResets) && AlwaysLegendaryCrafting == other.AlwaysLegendaryCrafting &&
         CraftingSpeedMultiplier == other.CraftingSpeedMultiplier && BuildingSpeedMultiplier == other.BuildingSpeedMultiplier &&
         ResearchSpeedMultiplier == other.ResearchSpeedMultiplier &&
-        EnabledColonistNeeds.SetEquals(other.EnabledColonistNeeds) && DisableAbilityCooldowns == other.DisableAbilityCooldowns;
+        EnabledColonistNeeds.SetEquals(other.EnabledColonistNeeds) && DisableAbilityCooldowns == other.DisableAbilityCooldowns &&
+        FastBiosculpterCycles == other.FastBiosculpterCycles;
 
     private static bool Equal(Dictionary<string, int> left, Dictionary<string, int> right)
     {

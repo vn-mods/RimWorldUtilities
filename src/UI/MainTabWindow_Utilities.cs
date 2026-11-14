@@ -11,7 +11,7 @@ public sealed class MainTabWindow_Utilities : MainTabWindow
     private const float ItemPanelHeight = 276f;
     private const float CraftingMinHeight = 166f;
     private const float ResearchPanelHeight = 112f;
-    private const float AbilitiesPanelHeight = 112f;
+    private const float AbilitiesPanelHeight = 180f;
 
     private Vector2 scrollPosition;
 

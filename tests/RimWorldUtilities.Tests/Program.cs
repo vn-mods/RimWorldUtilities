@@ -61,6 +61,21 @@ internal static class Program
             AbilityCooldownChecks.VerifyRestart(args[1], args[0] == "--cooldowns-on");
             return;
         }
+        if (args.Length == 2 && args[0] is "--biosculpter-on" or "--biosculpter-off")
+        {
+            BiosculpterCycleChecks.VerifyRestart(args[1], args[0] == "--biosculpter-on");
+            return;
+        }
+        if (args.Length == 1 && args[0] == "--biosculpter-native")
+        {
+            if (string.IsNullOrEmpty(gameDirectory)) throw new InvalidOperationException("Set RIMWORLD_GAME_DIR for native checks.");
+            BiosculpterCycleChecks.RunCore(Check);
+            BiosculpterAgeReversalChecks.RunCore(Check);
+            BiosculpterCycleChecks.RunNative(Check);
+            BiosculpterAgeReversalChecks.RunNative(Check);
+            Console.WriteLine($"Passed {checks} biosculpter assertions.");
+            return;
+        }
 
         ValidateAmounts();
         ValidateEnabling();
@@ -78,6 +93,8 @@ internal static class Program
         ResearchSpeedChecks.RunCore(Check);
         ColonistNeedsChecks.RunCore(Check);
         AbilityCooldownChecks.RunCore(Check);
+        BiosculpterCycleChecks.RunCore(Check);
+        BiosculpterAgeReversalChecks.RunCore(Check);
         if (!string.IsNullOrEmpty(gameDirectory))
         {
             ItemPropertiesChecks.RunNative(Check);
@@ -88,6 +105,8 @@ internal static class Program
             ResearchSpeedChecks.RunNative(Check);
             ColonistNeedsChecks.RunNative(Check);
             AbilityCooldownChecks.RunNative(Check);
+            BiosculpterCycleChecks.RunNative(Check);
+            BiosculpterAgeReversalChecks.RunNative(Check);
             ValidatePersistence();
             ValidateSteelMigration();
             ValidateResetPersistence();

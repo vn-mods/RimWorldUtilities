@@ -1,10 +1,11 @@
 # Ability and ritual cooldowns
 
-Open **Utilities → Abilities → Disable Cooldowns**. The single checkbox controls
+Open **Utilities → Abilities → Disable Cooldowns**. This checkbox controls
 standard ability timers and the shared/source-ability gates for **Leader Speech**
 and **Conversion Ritual**. It defaults to off and uses the existing global mod
 settings file, including write verification and failure reporting. It persists
 across saves and restarts; it is not a per-colony save setting.
+The separate Fast Biosculpter Cycles checkbox does not change this setting.
 
 Enabling takes effect on the next availability query, even while paused or with
 an existing cooldown. Stored timers continue to run normally. Disabling, losing

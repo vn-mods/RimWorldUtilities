@@ -6,6 +6,50 @@
 
 Paths below are relative to `refs/decompiled/Assembly-CSharp/` unless otherwise stated. This tree is read-only and excluded from Git.
 
+## Biosculpter cycles (rechecked against installed 1.7.5005 rev1082)
+
+- `CompBiosculpterPod.TryAcceptPawn(Pawn, CompBiosculpterPod_Cycle)` initializes
+  `currentCycleTicksRemaining` to `cycle.Props.durationDays * 60000f`. All four
+  vanilla cycle types share this work counter; their completion handlers are
+  separate. `CompProperties_BiosculpterPod_BaseCycle.durationDays` is a `float`.
+- `GetCycleSpeedFactorForPawn(Pawn p)` returns `max(0.1f, pod stat * biotuning *
+  occupant stat)`. The occupied `CycleSpeedFactor` getter delegates to it;
+  `CompTick()` subtracts that factor only while powered and handles completion at
+  zero. `CompInspectStringExtra()` divides remaining work by the same factor.
+  A Postfix can set a fixed processing rate without touching stored progress.
+- `Occupant` temporarily returns `pawnEnteringBiosculpter` during entry; verify
+  `ParentHolder` and `GetDirectlyHeldThings()` as well when requiring actual
+  containment. Contained pawns are despawned/suspended. `IsColonistPlayerControlled`
+  cannot qualify them. Reject prisoners/slaves before consulting `IsColonist`.
+- Native carry-to-pod menus admit colony prisoners. Pod faction alone cannot
+  establish eligibility. Check actual pawn faction, free-colonist/guest/quest
+  status, actual container and map `ParentFaction` dynamically.
+- Biotuning's 4,800,000-tick timer, the cumulative 60,000-tick power-outage counter
+  and biological-age-based age-reversal scheduling are independent of processing
+  speed. Preserve those paths. `PostExposeData()` saves the raw work counter.
+- Relevant signatures and normalized IL match between reference assembly version
+  `1.7.9803.38985` (game 1.7.4998) and installed `1.7.9810.32479` (1.7.5005).
+  See [implemented behavior, numerical limits and manual checks](biosculpter-cycles.md).
+- `CompBiosculpterPod_AgeReversalCycle.CycleCompleted(Pawn)` has one biological-age
+  assignment followed by `ResetAgeReversalDemand(ViaTreatment)` and its message.
+  Adjust the setter's input to preserve native difficulty reduction, execute age
+  invariants once and schedule from the final age. A late Postfix would otherwise
+  leave the deadline/message based on an intermediate age or require another reset.
+- `Pawn_AgeTracker.AgeBiologicalTicks` is the public mutation API: its setter calls
+  `CalculateInitialGrowth()` and `RecalculateLifeStageIndex()`, including native
+  stage-change notifications. Chronological age uses separate `birthAbsTicksInt`.
+  Do not write serialized age fields directly. These implementations and the
+  completion method were rechecked against the installed assembly as well.
+- `AdultMinAge` uses the **first Adult developmental flag**, not the stage name.
+  Installed human XML starts `HumanlikeTeenager` at 13; its omitted developmental
+  field defaults to Adult. The later `HumanlikeAdult` at 18 is not the treatment
+  minimum. Respect the live API for modded races/minimums; do not edit definitions.
+- `ResetAgeReversalDemand(ViaTreatment)` sets the biological-age deadline to
+  `max(final age, 25 years) + 60 days`; younger rejuvenated pawns therefore get a
+  longer remaining interval until demand. Native completion invokes the cycle
+  while the pawn is still contained, before ejection. Verify actual component
+  identity and current containment, not only its parent building or pawn faction.
+
 ## Ability and ritual cooldowns (rechecked against current local sources/assembly)
 
 - `Pawn.IsColonist` includes secure slaves; `IsColonistPlayerControlled` additionally

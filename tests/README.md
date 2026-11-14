@@ -33,6 +33,18 @@ Without `RIMWORLD_GAME_DIR`, the tests requiring those runtime DLLs (including
 some native property, serialization, and fresh-process checks) are skipped.
 Review the test output to see which checks actually ran.
 
+To run only biosculpter core/native checks, with installed runtime dependencies:
+
+```sh
+RIMWORLD_GAME_DIR="/path/to/RimWorld" \
+  dotnet run --project tests/RimWorldUtilities.Tests/RimWorldUtilities.Tests.csproj -c Release -- --biosculpter-native
+```
+
+The standard test output directory uses the reference game/Harmony DLLs. To verify
+another installed build, use a temporary copy of that output with its game DLLs
+and `0Harmony.dll` replaced by the installed versions; run the copied test DLL
+with `dotnet` and the same flag. Never replace files under `refs/` or deploy tests.
+
 ## What is covered
 
 - **Item Editor:** stack and HP bounds, target eligibility, quality callbacks,
@@ -51,6 +63,22 @@ Review the test output to see which checks actually ran.
   Optional native checks cover installed cooldown patches, retained timers after
   faction changes, shared-ideology ritual contexts, dialog confirmation guards,
   and Scribe/fresh-process setting persistence. These do not execute a full ritual.
+- **Biosculpter cycles:** default-off independent settings, fixed rates for all
+  four cycles and fractional-duration rounding. Optional native checks cover
+  actual containment, NPC/prisoner/quest exclusions, dynamic ownership/toggles,
+  2,500 powered native processing ticks, outage pause/counters, native power draw,
+  active-estimate calculation, unchanged patch targets and Scribe/fresh-process
+  persistence. Graphics, stat providers and completion effects are isolated.
+  Pod-record serialization reattaches a fixture pawn after loading; it is not a
+  complete occupied-pod/colony save or treatment-outcome test.
+- **Enhanced age reversal:** tick-based age examples and fractional rounding,
+  higher native minimums, stronger difficulty reduction, no age increase, exact
+  vanilla component/context checks, NPC exclusions and completion-time toggles.
+  Native checks execute the real completion method, public age setter and demand
+  reset; they verify unchanged chronological age, native growth/stage indices,
+  one reset/message using final-age scheduling, safe/idempotent registration and
+  rejection of ambiguous IL. Translation/message delivery and map/renderer stage
+  callbacks are isolated. Full in-game life-stage effects remain unverified.
 - **Compatibility checks:** preservation of unrelated settings, rejection of
   incompatible patch patterns, and independent feature availability.
 
