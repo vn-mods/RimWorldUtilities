@@ -46,6 +46,11 @@ Review the test output to see which checks actually ran.
   alternative research paths.
 - **Colonist Needs:** eligibility, Keep Full intervals, basic needs, and
   Biotech Learning/Play behavior.
+- **Abilities:** strict colonist eligibility, excluded charge/external/custom
+  categories, actual assembly IL patterns and rejection of ambiguous patterns.
+  Optional native checks cover installed cooldown patches, retained timers after
+  faction changes, shared-ideology ritual contexts, dialog confirmation guards,
+  and Scribe/fresh-process setting persistence. These do not execute a full ritual.
 - **Compatibility checks:** preservation of unrelated settings, rejection of
   incompatible patch patterns, and independent feature availability.
 

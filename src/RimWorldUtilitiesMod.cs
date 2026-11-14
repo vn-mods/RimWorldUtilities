@@ -15,6 +15,7 @@ public sealed class RimWorldUtilitiesMod : Mod
     internal CraftingService Crafting { get; }
     internal ColonistNeedsService ColonistNeeds { get; }
     internal ResearchSpeedService Research { get; }
+    internal AbilityCooldownService Abilities { get; }
 
     public RimWorldUtilitiesMod(ModContentPack content)
         : base(content)
@@ -28,6 +29,7 @@ public sealed class RimWorldUtilitiesMod : Mod
         Crafting = new CraftingService(settings, settingsStore.Save);
         Research = new ResearchSpeedService(settings, settingsStore.Save, Crafting.IsEligibleWorker);
         ColonistNeeds = new ColonistNeedsService(settings, settingsStore.Save);
+        Abilities = new AbilityCooldownService(settings, settingsStore.Save);
         Instance = this;
         LegendaryCraftingPatch.Install(Crafting);
         LegendaryConstructionPatch.Install(Crafting);
@@ -35,6 +37,7 @@ public sealed class RimWorldUtilitiesMod : Mod
         BuildingSpeedPatch.Install(Crafting);
         ResearchSpeedPatch.Install(Research);
         ColonistNeedsPatch.Install(ColonistNeeds);
+        AbilityCooldownPatch.Install(Abilities);
         Log.Message("[RimWorldUtilities] Mod loaded successfully!");
     }
 

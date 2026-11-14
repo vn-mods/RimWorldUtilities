@@ -11,6 +11,7 @@ public sealed class MainTabWindow_Utilities : MainTabWindow
     private const float ItemPanelHeight = 276f;
     private const float CraftingMinHeight = 166f;
     private const float ResearchPanelHeight = 112f;
+    private const float AbilitiesPanelHeight = 112f;
 
     private Vector2 scrollPosition;
 
@@ -19,7 +20,8 @@ public sealed class MainTabWindow_Utilities : MainTabWindow
         new ItemEditorPanel(),
         new ColonistNeedsPanel(),
         new CraftingPanel(),
-        new ResearchPanel()
+        new ResearchPanel(),
+        new AbilitiesPanel()
     };
 
     public MainTabWindow_Utilities()
@@ -43,12 +45,12 @@ public sealed class MainTabWindow_Utilities : MainTabWindow
 
             var width = inRect.width;
             var needsHeight = ColonistNeedsPanel.RequiredHeight(width);
-            var minimumHeight = ItemPanelHeight + needsHeight + CraftingMinHeight + ResearchPanelHeight + PanelGap * 3f;
+            var minimumHeight = ItemPanelHeight + needsHeight + CraftingMinHeight + ResearchPanelHeight + AbilitiesPanelHeight + PanelGap * 4f;
             if (minimumHeight > inRect.height)
             {
                 width -= 16f;
                 needsHeight = ColonistNeedsPanel.RequiredHeight(width);
-                minimumHeight = ItemPanelHeight + needsHeight + CraftingMinHeight + ResearchPanelHeight + PanelGap * 3f;
+                minimumHeight = ItemPanelHeight + needsHeight + CraftingMinHeight + ResearchPanelHeight + AbilitiesPanelHeight + PanelGap * 4f;
             }
             var contentHeight = Math.Max(inRect.height, minimumHeight);
             var contentRect = new Rect(0f, 0f, width, contentHeight);
@@ -56,11 +58,12 @@ public sealed class MainTabWindow_Utilities : MainTabWindow
             Widgets.BeginScrollView(inRect, ref scrollPosition, contentRect);
             try
             {
-                var craftingHeight = contentHeight - ItemPanelHeight - needsHeight - ResearchPanelHeight - PanelGap * 3f;
+                var craftingHeight = contentHeight - ItemPanelHeight - needsHeight - ResearchPanelHeight - AbilitiesPanelHeight - PanelGap * 4f;
                 var y = 0f;
                 for (var i = 0; i < panels.Length; i++)
                 {
-                    var height = i == 0 ? ItemPanelHeight : i == 1 ? needsHeight : i == 2 ? craftingHeight : ResearchPanelHeight;
+                    var height = i == 0 ? ItemPanelHeight : i == 1 ? needsHeight : i == 2 ? craftingHeight :
+                        i == 3 ? ResearchPanelHeight : AbilitiesPanelHeight;
                     panels[i].Draw(new Rect(0f, y, contentRect.width, height));
                     y += height + PanelGap;
                 }

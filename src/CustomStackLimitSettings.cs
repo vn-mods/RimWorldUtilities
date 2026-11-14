@@ -13,6 +13,7 @@ public sealed class CustomStackLimitSettings : ModSettings
     public int BuildingSpeedMultiplier = 1;
     public int ResearchSpeedMultiplier = 1;
     public HashSet<string> EnabledColonistNeeds = new();
+    public bool DisableAbilityCooldowns;
 
     public override void ExposeData()
     {
@@ -24,6 +25,7 @@ public sealed class CustomStackLimitSettings : ModSettings
         Scribe_Values.Look(ref BuildingSpeedMultiplier, "buildingSpeedMultiplier", 1);
         Scribe_Values.Look(ref ResearchSpeedMultiplier, "researchSpeedMultiplier", 1);
         Scribe_Collections.Look(ref EnabledColonistNeeds, "enabledColonistNeeds", LookMode.Value);
+        Scribe_Values.Look(ref DisableAbilityCooldowns, "disableAbilityCooldowns", false);
         EnabledLimits ??= new();
         OriginalLimits ??= new();
         PendingResets ??= new();
@@ -39,7 +41,8 @@ public sealed class CustomStackLimitSettings : ModSettings
         CraftingSpeedMultiplier = CraftingSpeedMultiplier,
         BuildingSpeedMultiplier = BuildingSpeedMultiplier,
         ResearchSpeedMultiplier = ResearchSpeedMultiplier,
-        EnabledColonistNeeds = new HashSet<string>(EnabledColonistNeeds)
+        EnabledColonistNeeds = new HashSet<string>(EnabledColonistNeeds),
+        DisableAbilityCooldowns = DisableAbilityCooldowns
     };
 
     internal void CopyFrom(CustomStackLimitSettings other)
@@ -52,6 +55,7 @@ public sealed class CustomStackLimitSettings : ModSettings
         BuildingSpeedMultiplier = other.BuildingSpeedMultiplier;
         ResearchSpeedMultiplier = other.ResearchSpeedMultiplier;
         EnabledColonistNeeds = new HashSet<string>(other.EnabledColonistNeeds);
+        DisableAbilityCooldowns = other.DisableAbilityCooldowns;
     }
 
     internal bool Matches(CustomStackLimitSettings other) =>
@@ -59,7 +63,7 @@ public sealed class CustomStackLimitSettings : ModSettings
         PendingResets.SetEquals(other.PendingResets) && AlwaysLegendaryCrafting == other.AlwaysLegendaryCrafting &&
         CraftingSpeedMultiplier == other.CraftingSpeedMultiplier && BuildingSpeedMultiplier == other.BuildingSpeedMultiplier &&
         ResearchSpeedMultiplier == other.ResearchSpeedMultiplier &&
-        EnabledColonistNeeds.SetEquals(other.EnabledColonistNeeds);
+        EnabledColonistNeeds.SetEquals(other.EnabledColonistNeeds) && DisableAbilityCooldowns == other.DisableAbilityCooldowns;
 
     private static bool Equal(Dictionary<string, int> left, Dictionary<string, int> right)
     {

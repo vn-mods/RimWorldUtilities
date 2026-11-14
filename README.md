@@ -12,6 +12,7 @@ A small collection of quality-of-life utilities for RimWorld 1.7.
 - **Colonist Needs** — Keep selected colonist needs full.
 - **Craft / Build / Research** — Speed up crafting, construction, and research (up to 20×).
 - **Always Legendary** — Optionally make crafted items and constructed furniture legendary.
+- **Abilities → Disable Cooldowns** — Bypass standard ability and Leader Speech/Conversion Ritual cooldowns for free, spawned player colonists.
 
 ## Installation
 

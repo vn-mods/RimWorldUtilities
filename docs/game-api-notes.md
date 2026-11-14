@@ -6,6 +6,51 @@
 
 Paths below are relative to `refs/decompiled/Assembly-CSharp/` unless otherwise stated. This tree is read-only and excluded from Git.
 
+## Ability and ritual cooldowns (rechecked against current local sources/assembly)
+
+- `Pawn.IsColonist` includes secure slaves; `IsColonistPlayerControlled` additionally
+  requires spawn and no mental state but still admits controlled slaves and some
+  quest colonists. `IsPlayerControlled` also admits colony mechanoids/subhumans.
+  Faction equality alone does not establish colonist control. `GuestStatus.Guest`
+  on an inactive guest tracker with no host returns a null `Pawn.GuestStatus`.
+  Source: `Verse/Pawn.cs`.
+- `Ability.CanCast` reads private `inCooldown` directly. `OnCooldown` and
+  `CooldownTicksRemaining` are separate getters. The latter also drives
+  `Command_Ability.GizmoOnGUI`'s cooldown overlay. `CooldownTick` consumes that
+  getter and clears `inCooldown`/regenerates charges on expiry: returning zero
+  globally without protecting the tick path can destroy raw cooldown state.
+  `StartCooldown(int)` assigns the deadline and may refill charges;
+  `ResetCooldown()` only clears `inCooldown`. Neither is a safe global substitute
+  for contextual reads. Sources: `RimWorld/Ability.cs`, `Command_Ability.cs`.
+- `PreActivate` notifies group abilities **and ideology ritual precepts**;
+  `JobDriver_CastAbility` can start cooldown again in its finish action, and
+  `Verb_AbilityShoot.TryCastShot` assigns one after a successful shot. Preserving
+  these paths retains jobs, group effects and NPC-visible shared deadlines.
+  `Psycast.CanCast` calls base first, then checks entropy/psyfocus; its `Activate`
+  still consumes resources. Sources: `RimWorld/Ability.cs`, `Psycast.cs`,
+  `Verse/AI/JobDriver_CastAbility.cs`, `Verse/Verb_AbilityShoot.cs`.
+- `Command_Ritual.ValidateDisabledState` has two shared-deadline field reads;
+  `FloatMenuOptionProvider_StartRitual.GetOptionsFor`'s iterator has four. Both
+  also consult the assigned single role's source ability. These counts are
+  verified by the regression suite against the current binary IL.
+- `Precept_Ritual.GetRitualBeginWindow` builds a `Dialog_BeginRitual` callback
+  that calls `RitualBehaviorWorker.TryExecuteOn(..., playerForced: true)`.
+  The worker revalidates `CanStartRitualNow` and `CanExecuteOn`; it has **no
+  cooldown gate**. Speech and Conversion worker overrides add role/convertee
+  checks, not cooldown validation. Startup then notifies assigned group abilities
+  and calls `Notify_CooldownFromAbilityStarted(int)` on the shared precept.
+  Sources: `Precept_Ritual.cs`, `Dialog_BeginRitual.cs`, `RitualBehaviorWorker.cs`,
+  `RitualBehaviorWorker_Speech.cs`, `RitualBehaviorWorker_Conversion.cs`.
+- Precept deadlines belong to the ideology, potentially shared across factions.
+  `Faction.OfPlayer.ideos.Has(ritual.ideo)` alone is insufficient ownership proof.
+  `Precept_Role.FillOrUpdateAbilityList` reuses role abilities and changes their
+  `pawn`/caster on reassignment, so even clearing a currently player-owned role
+  ability can transfer a cleared timer to a future NPC holder. Preserve raw state.
+- Ability `ExposeData` writes the raw cooldown fields. Ritual serialization saves
+  `abilityOnCooldownUntilTick` separately from `lastFinishedTick`; the latter
+  drives the 1,200,000-tick (20-day) repeat-quality penalty. Neither is a disposable
+  player-only cache. See [implementation and manual checks](ability-cooldowns.md).
+
 ## Item Editor
 
 ### Selection and edit targets

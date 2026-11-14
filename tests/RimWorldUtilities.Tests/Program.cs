@@ -56,6 +56,11 @@ internal static class Program
             VerifyResearchRestart(args[1], int.Parse(args[0]["--research-".Length..], CultureInfo.InvariantCulture));
             return;
         }
+        if (args.Length == 2 && args[0] is "--cooldowns-on" or "--cooldowns-off")
+        {
+            AbilityCooldownChecks.VerifyRestart(args[1], args[0] == "--cooldowns-on");
+            return;
+        }
 
         ValidateAmounts();
         ValidateEnabling();
@@ -72,6 +77,7 @@ internal static class Program
         BuildingSpeedChecks.RunCore(Check);
         ResearchSpeedChecks.RunCore(Check);
         ColonistNeedsChecks.RunCore(Check);
+        AbilityCooldownChecks.RunCore(Check);
         if (!string.IsNullOrEmpty(gameDirectory))
         {
             ItemPropertiesChecks.RunNative(Check);
@@ -81,6 +87,7 @@ internal static class Program
             BuildingSpeedChecks.RunNative(Check);
             ResearchSpeedChecks.RunNative(Check);
             ColonistNeedsChecks.RunNative(Check);
+            AbilityCooldownChecks.RunNative(Check);
             ValidatePersistence();
             ValidateSteelMigration();
             ValidateResetPersistence();
@@ -91,7 +98,7 @@ internal static class Program
         }
         else
         {
-            Console.WriteLine("Native property/Scribe/restart checks skipped: set RIMWORLD_GAME_DIR to the installed game directory.");
+            Console.WriteLine("Native Harmony/property/Scribe/restart checks skipped: set RIMWORLD_GAME_DIR to the installed game directory.");
         }
 
         Console.WriteLine($"Passed {checks} assertions.");
@@ -795,7 +802,7 @@ internal static class Program
         Console.WriteLine($"Fresh-process needs settings passed ({checks} assertions).");
     }
 
-    private static void RunFreshProcess(string path, string mode = "--restart")
+    internal static void RunFreshProcess(string path, string mode = "--restart")
     {
         var start = new ProcessStartInfo("dotnet") { RedirectStandardOutput = true, RedirectStandardError = true };
         start.ArgumentList.Add(Assembly.GetExecutingAssembly().Location);
